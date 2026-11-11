@@ -1,0 +1,6 @@
+{
+  "name": "Campus Ambassador Certificate Management System",
+  "description": "Official certificate management, generation, and verification platform for Google Student Ambassador Program 2026.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

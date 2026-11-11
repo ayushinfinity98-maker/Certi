@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Super Admin profile with system management privileges",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Admin Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "Admin email address" },
+        "name": { "type": "string", "description": "Admin full name", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["superadmin", "admin"], "description": "Admin role" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "CampusAmbassador": {
+      "title": "CampusAmbassador",
+      "description": "Campus Ambassador account profile and signature record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Campus Ambassador Firebase Auth UID" },
+        "caId": { "type": "string", "pattern": "^[A-Z0-9_-]{3,20}$", "description": "Unique assigned CA identifier" },
+        "name": { "type": "string", "maxLength": 120, "description": "Full name of the Campus Ambassador" },
+        "email": { "type": "string", "format": "email", "description": "Official email address" },
+        "college": { "type": "string", "maxLength": 150, "description": "College or University name" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Contact phone number" },
+        "status": { "type": "string", "enum": ["active", "deactivated", "suspended"], "description": "Account status" },
+        "signatureUrl": { "type": "string", "description": "Data URL or storage link to uploaded CA e-signature" },
+        "signatureUpdatedAt": { "type": "string", "format": "date-time", "description": "When signature was last updated" },
+        "totalStudents": { "type": "number", "description": "Cached count of students" },
+        "totalCertificates": { "type": "number", "description": "Cached count of issued certificates" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp created" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp updated" }
+      },
+      "required": ["uid", "caId", "name", "email", "college", "status"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student participant registered under a specific Campus Ambassador",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{4,64}$", "description": "Unique document ID" },
+        "caUid": { "type": "string", "description": "UID of the owning Campus Ambassador" },
+        "caId": { "type": "string", "description": "Assigned CA ID of the owning Ambassador" },
+        "fullName": { "type": "string", "maxLength": 120, "description": "Student full legal name" },
+        "email": { "type": "string", "format": "email", "description": "Student email address" },
+        "college": { "type": "string", "maxLength": 150, "description": "College or University" },
+        "semester": { "type": "string", "maxLength": 50, "description": "Semester / Year of study" },
+        "initiativeName": { "type": "string", "maxLength": 150, "description": "Name of the initiative or workshop" },
+        "participationDate": { "type": "string", "format": "date", "description": "Event participation date (YYYY-MM-DD)" },
+        "certificateStatus": { "type": "string", "enum": ["not_issued", "issued", "revoked"], "description": "Status of certificate" },
+        "certificateId": { "type": "string", "maxLength": 64, "description": "Associated certificate ID if issued" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["caUid", "fullName", "email", "college", "semester", "initiativeName", "participationDate", "certificateStatus"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Official issued certificate record with public verification data",
+      "type": "object",
+      "properties": {
+        "certificateId": { "type": "string", "pattern": "^[A-Z0-9_-]{6,64}$", "description": "Unique verification certificate identifier" },
+        "studentId": { "type": "string", "description": "Reference to student document ID" },
+        "studentName": { "type": "string", "maxLength": 120, "description": "Student full name on certificate" },
+        "initiativeName": { "type": "string", "maxLength": 150, "description": "Initiative or workshop title" },
+        "semester": { "type": "string", "maxLength": 50, "description": "Semester or Year" },
+        "college": { "type": "string", "maxLength": 150, "description": "Institution name" },
+        "participationDate": { "type": "string", "description": "Date of participation or issue" },
+        "caUid": { "type": "string", "description": "UID of the issuing Campus Ambassador" },
+        "caName": { "type": "string", "maxLength": 120, "description": "Name of the issuing Campus Ambassador" },
+        "caId": { "type": "string", "description": "Assigned CA ID" },
+        "signatureUrl": { "type": "string", "description": "Snapshot of CA signature used at issuance" },
+        "programName": { "type": "string", "maxLength": 100, "description": "Issuing program name" },
+        "status": { "type": "string", "enum": ["valid", "revoked"], "description": "Verification status" },
+        "verificationUrl": { "type": "string", "description": "Direct verification URL" },
+        "issuedAt": { "type": "string", "format": "date-time", "description": "Issuance timestamp" }
+      },
+      "required": ["certificateId", "studentId", "studentName", "initiativeName", "college", "participationDate", "caUid", "caName", "status"]
+    },
+    "EmailTemplate": {
+      "title": "EmailTemplate",
+      "description": "Centrally controlled email template managed by Super Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Template ID (e.g. default_certificate)" },
+        "subject": { "type": "string", "maxLength": 200, "description": "Email subject line with placeholders" },
+        "body": { "type": "string", "maxLength": 10000, "description": "Email body content with placeholders" },
+        "footer": { "type": "string", "maxLength": 2000, "description": "Email footer information" },
+        "senderName": { "type": "string", "maxLength": 100, "description": "Official sender display name" },
+        "senderEmail": { "type": "string", "format": "email", "description": "Official central sender email" },
+        "updatedBy": { "type": "string", "description": "Admin UID who last updated" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["subject", "body"]
+    },
+    "EmailLog": {
+      "title": "EmailLog",
+      "description": "Delivery log for certificate dispatch to students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID" },
+        "certificateId": { "type": "string", "description": "Issued certificate ID" },
+        "studentId": { "type": "string", "description": "Student document ID" },
+        "studentEmail": { "type": "string", "format": "email", "description": "Recipient email" },
+        "studentName": { "type": "string", "maxLength": 120, "description": "Recipient name" },
+        "caUid": { "type": "string", "description": "Issuing CA UID" },
+        "status": { "type": "string", "enum": ["pending", "processing", "sent", "delivered", "failed"], "description": "Delivery state" },
+        "errorMessage": { "type": "string", "maxLength": 1000, "description": "Error details if failed" },
+        "retryCount": { "type": "number", "description": "Number of retry attempts" },
+        "sentAt": { "type": "string", "format": "date-time", "description": "Timestamp when successfully sent" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Record creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Record update timestamp" }
+      },
+      "required": ["certificateId", "studentEmail", "caUid", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System security audit log for tracking administrative and issuance events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log entry ID" },
+        "actorUid": { "type": "string", "description": "UID of the user performing the action" },
+        "actorEmail": { "type": "string", "format": "email", "description": "Email of the actor" },
+        "actorRole": { "type": "string", "enum": ["admin", "ca", "system"], "description": "Role of the actor" },
+        "action": { "type": "string", "maxLength": 100, "description": "Action performed (e.g. CA_CREATED, SIGNATURE_UPDATED, CERTIFICATE_ISSUED)" },
+        "details": { "type": "string", "maxLength": 2000, "description": "Details or metadata of the action" },
+        "targetId": { "type": "string", "maxLength": 100, "description": "Target resource ID" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Timestamp of action" }
+      },
+      "required": ["actorUid", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": "Admin",
+      "description": "Authorized administrator registry"
+    },
+    "/campusAmbassadors/{caUid}": {
+      "schema": "CampusAmbassador",
+      "description": "Campus Ambassador directory and assigned profile"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Student participants tagged with caUid"
+    },
+    "/certificates/{certificateId}": {
+      "schema": "Certificate",
+      "description": "Official issued certificates, readable publicly for verification without revealing student email"
+    },
+    "/emailTemplates/{templateId}": {
+      "schema": "EmailTemplate",
+      "description": "Official central email templates"
+    },
+    "/emailLogs/{logId}": {
+      "schema": "EmailLog",
+      "description": "Delivery tracking for issued certificate emails"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Immutable security and audit trail records"
+    }
+  }
+}

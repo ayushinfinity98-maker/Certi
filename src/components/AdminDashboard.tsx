@@ -1,0 +1,641 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Users, 
+  Award, 
+  Mail, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Plus, 
+  Search, 
+  Filter, 
+  Shield, 
+  Edit, 
+  Key, 
+  Eye, 
+  FileText, 
+  RefreshCw, 
+  MoreVertical,
+  ExternalLink,
+  ChevronRight,
+  School,
+  Database
+} from 'lucide-react';
+import { CampusAmbassador, Certificate, EmailLog, AuditLog, Student } from '../types';
+import { 
+  getAllCampusAmbassadors, 
+  createCampusAmbassadorAccount, 
+  updateCampusAmbassador, 
+  updateCampusAmbassadorSignature, 
+  getAdminSystemMetrics,
+  getAuditLogsList,
+  getStudentsForCA,
+  logCAStatusChange
+} from '../services/dataService';
+import { CaModal } from './CaModal';
+import { SignatureModal } from './SignatureModal';
+import { EmailTemplateManager } from './EmailTemplateManager';
+import { CertificateTemplate } from './CertificateTemplate';
+import { AuditLogsView } from './AuditLogsView';
+import { checkAndSeedDemoDataIfEmpty } from '../services/seedData';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase/config';
+
+interface AdminDashboardProps {
+  adminUid: string;
+  adminEmail: string;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminEmail }) => {
+  const [activeTab, setActiveTab] = useState<'cas' | 'templates' | 'certificates' | 'audit'>('cas');
+  const [cas, setCas] = useState<CampusAmbassador[]>([]);
+  const [metrics, setMetrics] = useState({
+    totalCAs: 0,
+    activeCAs: 0,
+    totalStudents: 0,
+    totalCertificates: 0,
+    successfulEmails: 0,
+    failedEmails: 0
+  });
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [allCertificates, setAllCertificates] = useState<Certificate[]>([]);
+  const [allEmailLogs, setAllEmailLogs] = useState<EmailLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'deactivated' | 'suspended'>('all');
+
+  // Modals state
+  const [isCaModalOpen, setIsCaModalOpen] = useState(false);
+  const [editingCa, setEditingCa] = useState<CampusAmbassador | null>(null);
+  const [selectedCaForSig, setSelectedCaForSig] = useState<CampusAmbassador | null>(null);
+  const [credentialsModalCa, setCredentialsModalCa] = useState<CampusAmbassador | null>(null);
+  const [inspectingCert, setInspectingCert] = useState<Certificate | null>(null);
+  const [inspectingCaStudents, setInspectingCaStudents] = useState<{ ca: CampusAmbassador; students: Student[] } | null>(null);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      await checkAndSeedDemoDataIfEmpty();
+
+      const [loadedCas, loadedMetrics, logs, certsSnap, emailLogsSnap] = await Promise.all([
+        getAllCampusAmbassadors(),
+        getAdminSystemMetrics(),
+        getAuditLogsList(40),
+        getDocs(collection(db, 'certificates')),
+        getDocs(collection(db, 'emailLogs'))
+      ]);
+
+      setCas(loadedCas);
+      setMetrics(loadedMetrics);
+      setAuditLogs(logs);
+      setAllCertificates(certsSnap.docs.map(d => d.data() as Certificate));
+      setAllEmailLogs(emailLogsSnap.docs.map(d => d.data() as EmailLog));
+    } catch (err) {
+      console.error('Error loading admin data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleSaveCa = async (data: any) => {
+    if (editingCa) {
+      await updateCampusAmbassador(editingCa.uid, data, adminUid, adminEmail);
+    } else {
+      await createCampusAmbassadorAccount(data, adminUid, adminEmail);
+    }
+    await loadData();
+  };
+
+  const handleSaveSignature = async (sigUrl: string) => {
+    if (!selectedCaForSig) return;
+    await updateCampusAmbassadorSignature(selectedCaForSig.uid, sigUrl, adminUid, adminEmail);
+    setSelectedCaForSig(null);
+    await loadData();
+  };
+
+  const handleToggleStatus = async (ca: CampusAmbassador) => {
+    const nextStatus = ca.status === 'active' ? 'suspended' : 'active';
+    await updateCampusAmbassador(ca.uid, { status: nextStatus }, adminUid, adminEmail);
+    await logCAStatusChange(ca.uid, ca.name, nextStatus, adminUid, adminEmail);
+    await loadData();
+  };
+
+  const handleViewCaStudents = async (ca: CampusAmbassador) => {
+    const students = await getStudentsForCA(ca.uid);
+    setInspectingCaStudents({ ca, students });
+  };
+
+  const filteredCas = cas.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.college.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.caId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.email.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  return (
+    <div className="space-y-6">
+      
+      {/* Metrics Banner */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Total CAs</span>
+            <Users className="w-4 h-4 text-blue-600" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900">{metrics.totalCAs}</p>
+          <span className="text-[10px] text-emerald-600 font-medium">All registered campus ambassadors</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Active CAs</span>
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-emerald-700">{metrics.activeCAs}</p>
+          <span className="text-[10px] text-gray-500">Authorized to issue certs</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Students</span>
+            <School className="w-4 h-4 text-purple-600" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900">{metrics.totalStudents}</p>
+          <span className="text-[10px] text-gray-500">Registered across all campuses</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Certificates</span>
+            <Award className="w-4 h-4 text-amber-500" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-blue-600">{metrics.totalCertificates}</p>
+          <span className="text-[10px] text-gray-500">Issued & verifiable</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Emails Sent</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-emerald-700">{metrics.successfulEmails}</p>
+          <span className="text-[10px] text-emerald-600">Delivered with PDF</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+          <div className="flex items-center justify-between text-gray-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Failed Emails</span>
+            <AlertTriangle className="w-4 h-4 text-red-500" />
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-red-600">{metrics.failedEmails}</p>
+          <span className="text-[10px] text-gray-500">Retry available</span>
+        </div>
+      </div>
+
+      {/* Tabs Navigation */}
+      <div className="flex items-center space-x-2 border-b border-gray-200 pb-2">
+        <button
+          onClick={() => setActiveTab('cas')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'cas'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Campus Ambassadors Management</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('templates')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'templates'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Mail className="w-4 h-4" />
+          <span>Email Template Manager</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('certificates')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'certificates'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Award className="w-4 h-4" />
+          <span>Global Certificates & Delivery Logs</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'audit'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Shield className="w-4 h-4" />
+          <span>Audit Logs</span>
+          <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+            activeTab === 'audit' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+          }`}>
+            {auditLogs.length}
+          </span>
+        </button>
+      </div>
+
+      {/* TAB 1: Campus Ambassadors Management */}
+      {activeTab === 'cas' && (
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-xs flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center space-x-3 flex-1 min-w-[260px] max-w-md">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by name, college, email, or CA ID..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
+
+              <select
+                value={statusFilter}
+                onChange={(e: any) => setStatusFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active Only</option>
+                <option value="suspended">Suspended Only</option>
+                <option value="deactivated">Deactivated</option>
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={loadData}
+                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition"
+                title="Refresh CA list"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingCa(null);
+                  setIsCaModalOpen(true);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center"
+              >
+                <Plus className="w-4 h-4 mr-1.5" />
+                Create CA Account
+              </button>
+            </div>
+          </div>
+
+          {/* CA Table */}
+          <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                    <th className="py-3 px-4">Ambassador & ID</th>
+                    <th className="py-3 px-4">Institution / College</th>
+                    <th className="py-3 px-4">E-Signature</th>
+                    <th className="py-3 px-4">Account Status</th>
+                    <th className="py-3 px-4">Activity</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-xs">
+                  {filteredCas.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-gray-400">
+                        No Campus Ambassadors found matching the criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredCas.map((ca) => (
+                      <tr key={ca.uid} className="hover:bg-gray-50/60 transition">
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-gray-900">{ca.name}</div>
+                          <div className="text-[11px] text-gray-500 font-mono">{ca.email}</div>
+                          <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            {ca.caId}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4 text-gray-700">
+                          <div className="font-medium">{ca.college}</div>
+                          {ca.phone && <div className="text-[11px] text-gray-400">{ca.phone}</div>}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <div
+                            onClick={() => setSelectedCaForSig(ca)}
+                            className="cursor-pointer group flex items-center space-x-2 p-1.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg max-w-[150px] transition"
+                            title="Click to preview or replace uploaded signature"
+                          >
+                            {ca.signatureUrl ? (
+                              <img
+                                src={ca.signatureUrl}
+                                alt="Signature"
+                                className="h-6 max-w-[100px] object-contain"
+                              />
+                            ) : (
+                              <span className="text-[10px] italic text-amber-600">No signature</span>
+                            )}
+                            <Edit className="w-3 h-3 text-gray-400 group-hover:text-blue-600 ml-auto shrink-0" />
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            ca.status === 'active'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+                              ca.status === 'active' ? 'bg-emerald-500' : 'bg-amber-500'
+                            }`} />
+                            {ca.status}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <button
+                            onClick={() => handleViewCaStudents(ca)}
+                            className="text-left group"
+                          >
+                            <span className="font-semibold text-blue-600 group-hover:underline">
+                              View Records &rarr;
+                            </span>
+                          </button>
+                        </td>
+
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end space-x-1.5">
+                            <button
+                              onClick={() => setCredentialsModalCa(ca)}
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition"
+                              title="View / Reset CA Credentials"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingCa(ca);
+                                setIsCaModalOpen(true);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+                              title="Edit CA Details"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleToggleStatus(ca)}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
+                                ca.status === 'active'
+                                  ? 'border-red-200 text-red-600 hover:bg-red-50'
+                                  : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {ca.status === 'active' ? 'Suspend' : 'Activate'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: Email Template Manager */}
+      {activeTab === 'templates' && (
+        <EmailTemplateManager adminUid={adminUid} adminEmail={adminEmail} />
+      )}
+
+      {/* TAB 3: Global Certificates & Delivery Logs */}
+      {activeTab === 'certificates' && (
+        <div className="space-y-4">
+          <div className="bg-white p-6 rounded-2xl border border-gray-200/80 shadow-xs">
+            <h3 className="text-base font-bold text-gray-900 mb-2">
+              System-Wide Issued Certificates ({allCertificates.length})
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              All officially issued Google Student Ambassador Program 2026 certificates across all institutions.
+            </p>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                    <th className="py-2.5 px-3">Certificate ID</th>
+                    <th className="py-2.5 px-3">Student Name</th>
+                    <th className="py-2.5 px-3">Initiative</th>
+                    <th className="py-2.5 px-3">Campus Ambassador</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {allCertificates.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-6 text-center text-gray-400">
+                        No certificates issued yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    allCertificates.map(cert => (
+                      <tr key={cert.certificateId} className="hover:bg-gray-50">
+                        <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
+                          {cert.certificateId}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-900">
+                          {cert.studentName}
+                        </td>
+                        <td className="py-2.5 px-3 text-gray-600">
+                          {cert.initiativeName}
+                        </td>
+                        <td className="py-2.5 px-3 text-gray-600">
+                          {cert.caName} ({cert.caId})
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {cert.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            onClick={() => setInspectingCert(cert)}
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                          >
+                            Inspect Certificate
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: Audit Logs */}
+      {activeTab === 'audit' && (
+        <AuditLogsView
+          logs={auditLogs}
+          onRefresh={loadData}
+          isLoading={isLoading}
+        />
+      )}
+
+      {/* CA Modal (Create/Edit) */}
+      <CaModal
+        isOpen={isCaModalOpen}
+        onClose={() => setIsCaModalOpen(false)}
+        onSave={handleSaveCa}
+        ca={editingCa}
+        nextCaNumber={cas.length + 1}
+      />
+
+      {/* Signature Modal */}
+      {selectedCaForSig && (
+        <SignatureModal
+          ca={selectedCaForSig}
+          isOpen={!!selectedCaForSig}
+          onClose={() => setSelectedCaForSig(null)}
+          onSave={handleSaveSignature}
+        />
+      )}
+
+      {/* Credentials Modal */}
+      {credentialsModalCa && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-gray-900 flex items-center">
+              <Key className="w-5 h-5 text-blue-600 mr-2" />
+              Ambassador Credentials
+            </h3>
+            <p className="text-xs text-gray-500">
+              Provide these credentials to Ambassador <span className="font-semibold text-gray-800">{credentialsModalCa.name}</span> for logging in:
+            </p>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs font-mono">
+              <div>
+                <span className="text-gray-400 block text-[10px]">CA Identifier:</span>
+                <span className="text-blue-600 font-bold">{credentialsModalCa.caId}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Login Email:</span>
+                <span className="text-gray-800">{credentialsModalCa.email}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Initial Password:</span>
+                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  {credentialsModalCa.initialPassword || 'Ambassador@2026'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setCredentialsModalCa(null)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inspect Certificate Modal */}
+      {inspectingCert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <CertificateTemplate certificate={inspectingCert} onClose={() => setInspectingCert(null)} />
+          </div>
+        </div>
+      )}
+
+      {/* Inspect CA Students Modal */}
+      {inspectingCaStudents && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  Students for {inspectingCaStudents.ca.name}
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {inspectingCaStudents.ca.college} &bull; {inspectingCaStudents.ca.caId}
+                </p>
+              </div>
+              <button
+                onClick={() => setInspectingCaStudents(null)}
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100 text-xs">
+              {inspectingCaStudents.students.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  This Ambassador has not registered any students yet.
+                </div>
+              ) : (
+                inspectingCaStudents.students.map(s => (
+                  <div key={s.id} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-gray-900">{s.fullName}</p>
+                      <p className="text-[11px] text-gray-500">{s.email}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        s.certificateStatus === 'issued' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {s.certificateStatus}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setInspectingCaStudents(null)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-xl text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};

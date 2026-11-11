@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'ayushinfinity98@gmail.com'
+      );
+    }
+
+    function isCA() {
+      return isSignedIn() && exists(/databases/$(database)/documents/campusAmbassadors/$(request.auth.uid));
+    }
+
+    // Student Validation
+    function isValidStudent(data) {
+      return data.keys().hasAll(['caUid', 'fullName', 'email', 'college', 'semester', 'initiativeName', 'participationDate', 'certificateStatus']) &&
+        data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 120 &&
+        data.email is string && data.email.size() <= 120 &&
+        data.college is string && data.college.size() <= 150 &&
+        data.semester is string && data.semester.size() <= 50 &&
+        data.initiativeName is string && data.initiativeName.size() <= 150 &&
+        data.participationDate is string && data.participationDate.size() <= 50 &&
+        data.certificateStatus in ['not_issued', 'issued', 'revoked'] &&
+        data.caUid is string && data.caUid.size() <= 128;
+    }
+
+    // Certificate Validation
+    function isValidCertificate(data) {
+      return data.keys().hasAll(['certificateId', 'studentId', 'studentName', 'initiativeName', 'college', 'participationDate', 'caUid', 'caName', 'status']) &&
+        data.certificateId is string && data.certificateId.size() <= 64 &&
+        data.studentId is string && data.studentId.size() <= 128 &&
+        data.studentName is string && data.studentName.size() <= 120 &&
+        data.initiativeName is string && data.initiativeName.size() <= 150 &&
+        data.college is string && data.college.size() <= 150 &&
+        data.participationDate is string && data.participationDate.size() <= 50 &&
+        data.caUid is string && data.caUid.size() <= 128 &&
+        data.caName is string && data.caName.size() <= 120 &&
+        data.status in ['valid', 'revoked'];
+    }
+
+    // Campus Ambassadors collection
+    match /campusAmbassadors/{caUid} {
+      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == caUid);
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Admins collection
+    match /admins/{adminUid} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Students collection
+    match /students/{studentId} {
+      allow get: if isValidId(studentId) && (isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
+      allow create: if isValidId(studentId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid)) && isValidStudent(incoming());
+      allow update: if isValidId(studentId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid && incoming().caUid == request.auth.uid)) && isValidStudent(incoming());
+      allow delete: if isValidId(studentId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid));
+    }
+
+    // Certificates collection
+    match /certificates/{certificateId} {
+      // Public read for single certificate verification via QR code or ID lookup
+      allow get: if isValidId(certificateId);
+      // Listing restricted to Admin or the owning CA
+      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
+      // Issuance
+      allow create: if isValidId(certificateId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid)) && isValidCertificate(incoming());
+      allow update: if isValidId(certificateId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid && incoming().caUid == request.auth.uid)) && isValidCertificate(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Email Templates collection
+    match /emailTemplates/{templateId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Email Delivery Logs
+    match /emailLogs/{logId} {
+      allow get: if isValidId(logId) && (isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
+      allow create: if isValidId(logId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid));
+      allow update: if isValidId(logId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid));
+      allow delete: if isAdmin();
+    }
+
+    // Immutable Audit Logs
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(logId) && isSignedIn() && incoming().actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}

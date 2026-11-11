@@ -27,7 +27,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'ayushinfinity98@gmail.com'
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'ayushinfinity98@gmail.com')
       );
     }
 
@@ -64,15 +64,15 @@ service cloud.firestore {
 
     // Campus Ambassadors collection
     match /campusAmbassadors/{caUid} {
-      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == caUid);
+      allow get: if true;
       allow list: if isAdmin();
       allow write: if isAdmin();
     }
 
     // Admins collection
     match /admins/{adminUid} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && (request.auth.uid == adminUid || (request.auth.token.email != null && request.auth.token.email.lower() == 'ayushinfinity98@gmail.com')));
+      allow write: if isAdmin() || (isSignedIn() && request.auth.token.email != null && request.auth.token.email.lower() == 'ayushinfinity98@gmail.com');
     }
 
     // Students collection

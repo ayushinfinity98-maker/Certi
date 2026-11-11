@@ -169,45 +169,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
             </button>
           </form>
 
-          {/* Helper Credentials Chips for Easy 1-Click Fill */}
-          <div className="space-y-1.5 pt-1">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-              Quick Fill Credentials:
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setIdentifier(BOOTSTRAP_ADMIN_EMAIL);
-                  setPassword('Admin@2026');
-                }}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 border border-slate-200 rounded-lg text-[10px] font-medium text-slate-700 transition"
-              >
-                Super Admin ({BOOTSTRAP_ADMIN_EMAIL})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIdentifier('CA-2026-001');
-                  setPassword('Ambassador@Priya26');
-                }}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 border border-slate-200 rounded-lg text-[10px] font-medium text-slate-700 transition"
-              >
-                CA: CA-2026-001 (Stanford)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIdentifier('CA-2026-002');
-                  setPassword('Ambassador@Marcus26');
-                }}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 border border-slate-200 rounded-lg text-[10px] font-medium text-slate-700 transition"
-              >
-                CA: CA-2026-002 (MIT)
-              </button>
-            </div>
-          </div>
-
           {/* Alternative Google Sign In */}
           <div className="space-y-4 pt-1">
             <div className="flex items-center space-x-3">
@@ -230,8 +191,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
                 <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
                 <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
               </svg>
-              <span>Continue with Google ({BOOTSTRAP_ADMIN_EMAIL})</span>
+              <span>Continue with Google</span>
             </button>
+            <p className="text-[10px] text-gray-400 text-center">
+              Super Admin & authorized Campus Ambassadors can sign in directly with their Google account.
+            </p>
           </div>
 
           <p className="text-[11px] text-gray-400 text-center leading-relaxed">

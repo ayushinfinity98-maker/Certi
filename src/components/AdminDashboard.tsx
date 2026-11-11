@@ -18,7 +18,11 @@ import {
   ExternalLink,
   ChevronRight,
   School,
-  Database
+  Database,
+  Palette,
+  Copy,
+  Check,
+  Chrome
 } from 'lucide-react';
 import { CampusAmbassador, Certificate, EmailLog, AuditLog, Student } from '../types';
 import { 
@@ -35,6 +39,7 @@ import { CaModal } from './CaModal';
 import { SignatureModal } from './SignatureModal';
 import { EmailTemplateManager } from './EmailTemplateManager';
 import { CertificateTemplate } from './CertificateTemplate';
+import { CertificateDesigner } from './CertificateDesigner';
 import { AuditLogsView } from './AuditLogsView';
 import { checkAndSeedDemoDataIfEmpty } from '../services/seedData';
 import { collection, getDocs } from 'firebase/firestore';
@@ -46,7 +51,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminEmail }) => {
-  const [activeTab, setActiveTab] = useState<'cas' | 'templates' | 'certificates' | 'audit'>('cas');
+  const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'templates' | 'certificates' | 'audit'>('cas');
   const [cas, setCas] = useState<CampusAmbassador[]>([]);
   const [metrics, setMetrics] = useState({
     totalCAs: 0,
@@ -70,6 +75,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const [editingCa, setEditingCa] = useState<CampusAmbassador | null>(null);
   const [selectedCaForSig, setSelectedCaForSig] = useState<CampusAmbassador | null>(null);
   const [credentialsModalCa, setCredentialsModalCa] = useState<CampusAmbassador | null>(null);
+  const [copiedCredentials, setCopiedCredentials] = useState(false);
   const [inspectingCert, setInspectingCert] = useState<Certificate | null>(null);
   const [inspectingCaStudents, setInspectingCaStudents] = useState<{ ca: CampusAmbassador; students: Student[] } | null>(null);
 
@@ -214,6 +220,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
         </button>
 
         <button
+          onClick={() => setActiveTab('designer')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'designer'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Palette className="w-4 h-4" />
+          <span>Certificate Templates & Designer</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('templates')}
           className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
             activeTab === 'templates'
@@ -315,6 +333,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                   <tr className="bg-gray-50/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
                     <th className="py-3 px-4">Ambassador & ID</th>
                     <th className="py-3 px-4">Institution / College</th>
+                    <th className="py-3 px-4">Login & Access</th>
+                    <th className="py-3 px-4">Permissions</th>
                     <th className="py-3 px-4">E-Signature</th>
                     <th className="py-3 px-4">Account Status</th>
                     <th className="py-3 px-4">Activity</th>
@@ -324,7 +344,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                 <tbody className="divide-y divide-gray-100 text-xs">
                   {filteredCas.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-gray-400">
+                      <td colSpan={8} className="py-8 text-center text-gray-400">
                         No Campus Ambassadors found matching the criteria.
                       </td>
                     </tr>
@@ -342,6 +362,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                         <td className="py-3 px-4 text-gray-700">
                           <div className="font-medium">{ca.college}</div>
                           {ca.phone && <div className="text-[11px] text-gray-400">{ca.phone}</div>}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+                              Email & Pass
+                            </span>
+                            {ca.allowGoogleLogin !== false ? (
+                              <div className="text-[10px] font-semibold text-emerald-700 flex items-center">
+                                <Chrome className="w-3 h-3 mr-1 text-emerald-600 shrink-0" />
+                                <span>Google Sign-In</span>
+                              </div>
+                            ) : (
+                              <span className="text-[9px] text-gray-400 block italic">Google Disabled</span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <div className="flex flex-wrap gap-1 max-w-[170px]">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              ca.permissions?.canIssueCertificates !== false ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-100 text-gray-400'
+                            }`} title="Issue Certificates">
+                              Certs {ca.permissions?.canIssueCertificates !== false ? '✓' : '✗'}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              ca.permissions?.canImportCsv !== false ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-100 text-gray-400'
+                            }`} title="CSV Import">
+                              CSV {ca.permissions?.canImportCsv !== false ? '✓' : '✗'}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              ca.permissions?.canEditStudents !== false ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-100 text-gray-400'
+                            }`} title="Edit Students">
+                              Edit {ca.permissions?.canEditStudents !== false ? '✓' : '✗'}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              ca.permissions?.canSendEmails !== false ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-100 text-gray-400'
+                            }`} title="Send Emails">
+                              Mail {ca.permissions?.canSendEmails !== false ? '✓' : '✗'}
+                            </span>
+                          </div>
                         </td>
 
                         <td className="py-3 px-4">
@@ -426,6 +487,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: Certificate Designer & Custom Templates */}
+      {activeTab === 'designer' && (
+        <CertificateDesigner adminUid={adminUid} adminEmail={adminEmail} />
       )}
 
       {/* TAB 2: Email Template Manager */}
@@ -541,7 +607,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
               Provide these credentials to Ambassador <span className="font-semibold text-gray-800">{credentialsModalCa.name}</span> for logging in:
             </p>
 
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs font-mono">
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5 text-xs font-mono">
               <div>
                 <span className="text-gray-400 block text-[10px]">CA Identifier:</span>
                 <span className="text-blue-600 font-bold">{credentialsModalCa.caId}</span>
@@ -556,14 +622,66 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                   {credentialsModalCa.initialPassword || 'Ambassador@2026'}
                 </span>
               </div>
+              <div className="pt-2 border-t border-slate-200/80">
+                <span className="text-gray-400 block text-[10px]">Google Sign-In Access:</span>
+                {credentialsModalCa.allowGoogleLogin !== false ? (
+                  <span className="text-emerald-700 font-semibold flex items-center mt-0.5">
+                    <Chrome className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                    Enabled for ({credentialsModalCa.googleEmail || credentialsModalCa.email})
+                  </span>
+                ) : (
+                  <span className="text-gray-500 italic text-[11px]">Disabled</span>
+                )}
+              </div>
+              <div className="pt-2 border-t border-slate-200/80">
+                <span className="text-gray-400 block text-[10px] mb-1">Active Operational Permissions:</span>
+                <div className="grid grid-cols-2 gap-1 font-sans text-[11px]">
+                  <span className={credentialsModalCa.permissions?.canIssueCertificates !== false ? 'text-emerald-700' : 'text-gray-400'}>
+                    {credentialsModalCa.permissions?.canIssueCertificates !== false ? '✓' : '✗'} Issue Certificates
+                  </span>
+                  <span className={credentialsModalCa.permissions?.canImportCsv !== false ? 'text-emerald-700' : 'text-gray-400'}>
+                    {credentialsModalCa.permissions?.canImportCsv !== false ? '✓' : '✗'} CSV Import
+                  </span>
+                  <span className={credentialsModalCa.permissions?.canEditStudents !== false ? 'text-emerald-700' : 'text-gray-400'}>
+                    {credentialsModalCa.permissions?.canEditStudents !== false ? '✓' : '✗'} Edit Students
+                  </span>
+                  <span className={credentialsModalCa.permissions?.canSendEmails !== false ? 'text-emerald-700' : 'text-gray-400'}>
+                    {credentialsModalCa.permissions?.canSendEmails !== false ? '✓' : '✗'} Email Dispatch
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                  const msg = `Google Student Ambassador Portal Login:\n- CA ID: ${credentialsModalCa.caId}\n- Email: ${credentialsModalCa.email}\n- Password: ${credentialsModalCa.initialPassword || 'Ambassador@2026'}\n- Direct Google Sign-In: ${credentialsModalCa.allowGoogleLogin !== false ? 'Enabled (' + (credentialsModalCa.googleEmail || credentialsModalCa.email) + ')' : 'Disabled'}\n- Login URL: ${origin}`;
+                  navigator.clipboard.writeText(msg);
+                  setCopiedCredentials(true);
+                  setTimeout(() => setCopiedCredentials(false), 2500);
+                }}
+                className="inline-flex items-center px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-gray-800 rounded-xl text-xs font-semibold transition"
+              >
+                {copiedCredentials ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600 mr-1.5" />
+                    <span>Copied Credentials!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-gray-600 mr-1.5" />
+                    <span>Copy Credentials</span>
+                  </>
+                )}
+              </button>
+
               <button
                 onClick={() => setCredentialsModalCa(null)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold"
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-xs hover:bg-blue-700 transition"
               >
-                Close
+                Done
               </button>
             </div>
           </div>

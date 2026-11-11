@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { CampusAmbassador } from '../types';
-import { X, UserCheck, Key, Shield, AlertCircle } from 'lucide-react';
+import { CampusAmbassador, AmbassadorPermissions } from '../types';
+import { X, UserCheck, Key, Shield, AlertCircle, Sparkles, CheckSquare, Square, Chrome } from 'lucide-react';
 import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
 
 interface CaModalProps {
@@ -25,6 +25,15 @@ export const CaModal: React.FC<CaModalProps> = ({
   const [caId, setCaId] = useState('');
   const [initialPassword, setInitialPassword] = useState('');
   const [status, setStatus] = useState<'active' | 'deactivated' | 'suspended'>('active');
+  const [allowGoogleLogin, setAllowGoogleLogin] = useState(true);
+  const [googleEmail, setGoogleEmail] = useState('');
+
+  // Granular Permissions ("jo admin permission de co save hoti rhe")
+  const [canIssueCertificates, setCanIssueCertificates] = useState(true);
+  const [canImportCsv, setCanImportCsv] = useState(true);
+  const [canEditStudents, setCanEditStudents] = useState(true);
+  const [canSendEmails, setCanSendEmails] = useState(true);
+
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -37,6 +46,19 @@ export const CaModal: React.FC<CaModalProps> = ({
       setCaId(ca.caId);
       setInitialPassword(ca.initialPassword || '');
       setStatus(ca.status);
+      setAllowGoogleLogin(ca.allowGoogleLogin !== false);
+      setGoogleEmail(ca.googleEmail || ca.email || '');
+
+      const perms = ca.permissions || {
+        canIssueCertificates: true,
+        canImportCsv: true,
+        canEditStudents: true,
+        canSendEmails: true
+      };
+      setCanIssueCertificates(perms.canIssueCertificates !== false);
+      setCanImportCsv(perms.canImportCsv !== false);
+      setCanEditStudents(perms.canEditStudents !== false);
+      setCanSendEmails(perms.canSendEmails !== false);
     } else {
       setName('');
       setEmail('');
@@ -44,15 +66,25 @@ export const CaModal: React.FC<CaModalProps> = ({
       setPhone('');
       const padNum = String(nextCaNumber).padStart(3, '0');
       setCaId(`CA-2026-${padNum}`);
-      // Generate a strong, friendly initial password
       const randStr = Math.random().toString(36).substring(2, 6).toUpperCase();
       setInitialPassword(`Ambassador@${randStr}26`);
       setStatus('active');
+      setAllowGoogleLogin(true);
+      setGoogleEmail('');
+      setCanIssueCertificates(true);
+      setCanImportCsv(true);
+      setCanEditStudents(true);
+      setCanSendEmails(true);
     }
     setError(null);
   }, [ca, nextCaNumber, isOpen]);
 
   if (!isOpen) return null;
+
+  const generateNewPassword = () => {
+    const randStr = Math.random().toString(36).substring(2, 6).toUpperCase();
+    setInitialPassword(`Ambassador@${randStr}26`);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +100,18 @@ export const CaModal: React.FC<CaModalProps> = ({
       return;
     }
 
+    if (!initialPassword.trim()) {
+      setError('Please assign an initial login password for this Campus Ambassador.');
+      return;
+    }
+
+    const permissions: AmbassadorPermissions = {
+      canIssueCertificates,
+      canImportCsv,
+      canEditStudents,
+      canSendEmails
+    };
+
     setIsSubmitting(true);
     try {
       const defaultSig = ca?.signatureUrl || generateScriptSignatureDataUrl(name.trim());
@@ -79,6 +123,9 @@ export const CaModal: React.FC<CaModalProps> = ({
         phone: phone.trim(),
         caId: caId.trim().toUpperCase(),
         initialPassword: initialPassword.trim(),
+        allowGoogleLogin,
+        googleEmail: (googleEmail.trim() || email.trim()).toLowerCase(),
+        permissions,
         status,
         signatureUrl: defaultSig,
         signatureUpdatedAt: ca?.signatureUpdatedAt || new Date().toISOString()
@@ -92,20 +139,21 @@ export const CaModal: React.FC<CaModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 flex flex-col space-y-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
+      <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-7 shadow-2xl border border-gray-100 flex flex-col space-y-5 my-8 max-h-[92vh] overflow-y-auto">
         
+        {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-          <div className="flex items-center space-x-2">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+          <div className="flex items-center space-x-2.5">
+            <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
               <UserCheck className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-gray-900">
-                {ca ? 'Edit Campus Ambassador' : 'Create Campus Ambassador Account'}
+              <h3 className="text-base sm:text-lg font-bold text-gray-900">
+                {ca ? 'Edit Ambassador Account & Permissions' : 'Add Campus Ambassador Account'}
               </h3>
               <p className="text-xs text-gray-500">
-                Google Student Ambassador Program 2026
+                Setup login credentials, Google Auth, and operational permissions
               </p>
             </div>
           </div>
@@ -124,112 +172,241 @@ export const CaModal: React.FC<CaModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Full Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Maya Sharma"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Assigned CA ID *
-              </label>
-              <input
-                type="text"
-                required
-                value={caId}
-                onChange={(e) => setCaId(e.target.value.toUpperCase())}
-                placeholder="CA-2026-001"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm font-mono uppercase focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          
+          {/* Section 1: Basic Information */}
+          <div className="space-y-3">
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+              1. Basic Profile
+            </span>
 
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Official Email Address *
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="e.g. maya.ambassador@university.edu"
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-            />
-          </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Maya Sharma"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                College / Institution *
-              </label>
-              <input
-                type="text"
-                required
-                value={college}
-                onChange={(e) => setCollege(e.target.value)}
-                placeholder="e.g. IIT Delhi"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Assigned CA ID *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={caId}
+                  onChange={(e) => setCaId(e.target.value.toUpperCase())}
+                  placeholder="CA-2026-003"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm font-mono uppercase focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Official Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (!googleEmail) setGoogleEmail(e.target.value);
+                  }}
+                  placeholder="maya@university.edu"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  College / Institution *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={college}
+                  onChange={(e) => setCollege(e.target.value)}
+                  placeholder="e.g. IIT Delhi"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
+            </div>
+
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Contact Phone
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Contact Phone (Optional)
               </label>
               <input
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="+1 555-0192"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                placeholder="+91 98765 43210"
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               />
             </div>
           </div>
 
-          {/* Credentials box */}
-          <div className="p-3 bg-blue-50/70 border border-blue-200/60 rounded-xl space-y-2">
-            <div className="flex items-center space-x-1.5 text-xs font-bold text-blue-900">
-              <Key className="w-3.5 h-3.5 text-blue-600" />
-              <span>CA Login Credentials (Provided by Admin)</span>
-            </div>
+          {/* Section 2: Login Credentials & Authentication Options */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3.5">
+            <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block flex items-center">
+              <Key className="w-3.5 h-3.5 mr-1 text-blue-600" />
+              2. Authentication & Login Methods
+            </span>
+
+            {/* Email + Password Setup */}
             <div>
-              <label className="block text-[11px] font-medium text-blue-800 mb-1">
-                Initial Account Password
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-gray-700">
+                  Account Password *
+                </label>
+                <button
+                  type="button"
+                  onClick={generateNewPassword}
+                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 flex items-center"
+                >
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  Generate Password
+                </button>
+              </div>
               <input
                 type="text"
+                required
                 value={initialPassword}
                 onChange={(e) => setInitialPassword(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-xs font-mono text-gray-800 focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                placeholder="Ambassador password"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs sm:text-sm font-mono text-gray-800 focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               />
-              <p className="text-[10px] text-blue-600 mt-1">
-                Provide these credentials to the Ambassador. They can log in via CA ID or Email.
+              <p className="text-[10px] text-gray-500 mt-1">
+                Ambassador can log in with their CA ID (<span className="font-mono text-blue-600 font-bold">{caId || 'CA-ID'}</span>) or Email and this password.
               </p>
+            </div>
+
+            {/* Direct Google Sign-In Enablement */}
+            <div className="pt-2 border-t border-slate-200/80 space-y-2">
+              <label className="flex items-center space-x-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowGoogleLogin}
+                  onChange={(e) => setAllowGoogleLogin(e.target.checked)}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-800 flex items-center">
+                    <Chrome className="w-3.5 h-3.5 text-blue-600 mr-1.5" />
+                    Allow Direct Google Sign-In
+                  </span>
+                  <p className="text-[10px] text-gray-500">
+                    Ambassador can log in with 1-click via Google using their registered Google email
+                  </p>
+                </div>
+              </label>
+
+              {allowGoogleLogin && (
+                <div className="pl-6 pt-1">
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                    Designated Google Account Email (if different from official email)
+                  </label>
+                  <input
+                    type="email"
+                    value={googleEmail}
+                    onChange={(e) => setGoogleEmail(e.target.value)}
+                    placeholder={email || 'ambassador.google@gmail.com'}
+                    className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
+          {/* Section 3: Granular Permissions (Admin Control) */}
+          <div className="p-4 bg-blue-50/50 border border-blue-200/70 rounded-2xl space-y-2.5">
+            <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wider block flex items-center">
+              <Shield className="w-3.5 h-3.5 mr-1 text-blue-600" />
+              3. Operational Permissions (Configured by Super Admin)
+            </span>
+            <p className="text-[11px] text-gray-600">
+              Select which operational actions this Campus Ambassador is allowed to perform in their dashboard:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <label className="flex items-start space-x-2 cursor-pointer p-2 rounded-xl bg-white border border-blue-100 hover:border-blue-300 transition">
+                <input
+                  type="checkbox"
+                  checked={canIssueCertificates}
+                  onChange={(e) => setCanIssueCertificates(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-900 block">Issue Certificates</span>
+                  <span className="text-[10px] text-gray-500 block">Generate and grant verified certificates</span>
+                </div>
+              </label>
+
+              <label className="flex items-start space-x-2 cursor-pointer p-2 rounded-xl bg-white border border-blue-100 hover:border-blue-300 transition">
+                <input
+                  type="checkbox"
+                  checked={canImportCsv}
+                  onChange={(e) => setCanImportCsv(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-900 block">Import Students CSV</span>
+                  <span className="text-[10px] text-gray-500 block">Bulk upload participant lists via Excel/CSV</span>
+                </div>
+              </label>
+
+              <label className="flex items-start space-x-2 cursor-pointer p-2 rounded-xl bg-white border border-blue-100 hover:border-blue-300 transition">
+                <input
+                  type="checkbox"
+                  checked={canEditStudents}
+                  onChange={(e) => setCanEditStudents(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-900 block">Manage Student Records</span>
+                  <span className="text-[10px] text-gray-500 block">Add, edit, or delete student registrations</span>
+                </div>
+              </label>
+
+              <label className="flex items-start space-x-2 cursor-pointer p-2 rounded-xl bg-white border border-blue-100 hover:border-blue-300 transition">
+                <input
+                  type="checkbox"
+                  checked={canSendEmails}
+                  onChange={(e) => setCanSendEmails(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-900 block">Automated Email Dispatch</span>
+                  <span className="text-[10px] text-gray-500 block">Deliver PDF certificates directly to student emails</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Section 4: Account Status */}
           <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
+            <label className="block text-xs font-bold text-gray-700 mb-1">
               Account Status
             </label>
             <select
               value={status}
               onChange={(e: any) => setStatus(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
             >
-              <option value="active">Active (Can issue certificates & manage students)</option>
-              <option value="deactivated">Deactivated (Access temporarily disabled)</option>
-              <option value="suspended">Suspended (Blocked from logging in)</option>
+              <option value="active">Active (Full access permitted by permissions)</option>
+              <option value="deactivated">Deactivated (Access temporarily paused)</option>
+              <option value="suspended">Suspended (Login completely blocked)</option>
             </select>
           </div>
 
@@ -237,16 +414,16 @@ export const CaModal: React.FC<CaModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-gray-600 hover:text-gray-800 transition"
+              className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-800 transition"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition disabled:opacity-50"
+              className="px-6 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition disabled:opacity-50"
             >
-              {isSubmitting ? 'Saving...' : ca ? 'Save Changes' : 'Create CA Account'}
+              {isSubmitting ? 'Saving Ambassador...' : ca ? 'Update Ambassador & Permissions' : 'Create Ambassador Account'}
             </button>
           </div>
         </form>

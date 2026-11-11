@@ -20,6 +20,7 @@ import {
   Share2,
   ExternalLink,
   ShieldCheck,
+  Shield,
   School
 } from 'lucide-react';
 import { Student, CampusAmbassador, Certificate, EmailLog } from '../types';
@@ -202,25 +203,57 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
           </div>
         </div>
 
-        {/* Signature Snapshot */}
-        <div className="flex items-center space-x-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2">
-          <div className="text-right">
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
-              Official E-Signature
-            </span>
-            <span className="text-[10px] text-emerald-600 font-semibold flex items-center justify-end">
-              <ShieldCheck className="w-3 h-3 mr-1" /> Auto-Injected in Certificates
-            </span>
+        {/* Signature Snapshot & Permissions Status */}
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2">
+            <div className="text-right">
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
+                Official E-Signature
+              </span>
+              <span className="text-[10px] text-emerald-600 font-semibold flex items-center justify-end">
+                <ShieldCheck className="w-3 h-3 mr-1" /> Auto-Injected in Certificates
+              </span>
+            </div>
+            {ca.signatureUrl ? (
+              <img
+                src={ca.signatureUrl}
+                alt="E-Signature"
+                className="h-8 max-w-[120px] object-contain"
+              />
+            ) : (
+              <span className="text-xs italic text-gray-400">Default Script</span>
+            )}
           </div>
-          {ca.signatureUrl ? (
-            <img
-              src={ca.signatureUrl}
-              alt="E-Signature"
-              className="h-8 max-w-[120px] object-contain"
-            />
-          ) : (
-            <span className="text-xs italic text-gray-400">Default Script</span>
-          )}
+        </div>
+      </div>
+
+      {/* Permissions Bar */}
+      <div className="bg-blue-50/60 border border-blue-200/60 px-4 py-2.5 rounded-2xl flex items-center justify-between flex-wrap gap-2 text-xs">
+        <div className="flex items-center space-x-2">
+          <Shield className="w-4 h-4 text-blue-600" />
+          <span className="font-bold text-gray-900">Admin-Granted Permissions:</span>
+        </div>
+        <div className="flex items-center space-x-2 flex-wrap gap-1.5">
+          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            (ca.permissions?.canIssueCertificates !== false) ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-500 line-through'
+          }`}>
+            Issue Certificates {(ca.permissions?.canIssueCertificates !== false) ? '✓' : '✗'}
+          </span>
+          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            (ca.permissions?.canImportCsv !== false) ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-500 line-through'
+          }`}>
+            CSV Import {(ca.permissions?.canImportCsv !== false) ? '✓' : '✗'}
+          </span>
+          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            (ca.permissions?.canEditStudents !== false) ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-500 line-through'
+          }`}>
+            Edit Students {(ca.permissions?.canEditStudents !== false) ? '✓' : '✗'}
+          </span>
+          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            (ca.permissions?.canSendEmails !== false) ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-500 line-through'
+          }`}>
+            Email Dispatch {(ca.permissions?.canSendEmails !== false) ? '✓' : '✗'}
+          </span>
         </div>
       </div>
 
@@ -316,7 +349,9 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
               <button
                 type="button"
                 onClick={() => setIsBulkModalOpen(true)}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center animate-in fade-in"
+                disabled={ca.permissions?.canIssueCertificates === false}
+                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center animate-in fade-in disabled:opacity-50 disabled:cursor-not-allowed"
+                title={ca.permissions?.canIssueCertificates === false ? 'Certificate issuance is disabled by Super Admin' : 'Bulk Issue Certificates'}
               >
                 <Award className="w-3.5 h-3.5 mr-1.5" />
                 Bulk Issue ({selectedStudentIds.size})
@@ -326,7 +361,9 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
             <button
               type="button"
               onClick={() => setIsCsvModalOpen(true)}
-              className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-xl text-xs font-semibold shadow-2xs transition flex items-center"
+              disabled={ca.permissions?.canImportCsv === false}
+              className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-xl text-xs font-semibold shadow-2xs transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+              title={ca.permissions?.canImportCsv === false ? 'CSV Import is disabled by Super Admin' : 'Import CSV / Excel'}
             >
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
               Import CSV / Excel
@@ -338,7 +375,9 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
                 setEditingStudent(null);
                 setIsStudentModalOpen(true);
               }}
-              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition flex items-center"
+              disabled={ca.permissions?.canEditStudents === false}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+              title={ca.permissions?.canEditStudents === false ? 'Student registration is disabled by Super Admin' : 'Add Student'}
             >
               <Plus className="w-3.5 h-3.5 mr-1.5" />
               Add Student
@@ -461,9 +500,9 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
                           ) : (
                             <button
                               onClick={() => handleIssueSingle(student)}
-                              disabled={issuingSingleStudent?.id === student.id}
-                              className="px-2.5 py-1 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center disabled:opacity-50"
-                              title="Issue Certificate and Email to Student"
+                              disabled={issuingSingleStudent?.id === student.id || ca.permissions?.canIssueCertificates === false}
+                              className="px-2.5 py-1 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={ca.permissions?.canIssueCertificates === false ? 'Certificate issuance restricted by Super Admin' : 'Issue Certificate and Email to Student'}
                             >
                               <Award className="w-3 h-3 mr-1" />
                               {issuingSingleStudent?.id === student.id ? 'Issuing...' : 'Issue'}
@@ -475,16 +514,18 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
                               setEditingStudent(student);
                               setIsStudentModalOpen(true);
                             }}
-                            className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"
-                            title="Edit"
+                            disabled={ca.permissions?.canEditStudents === false}
+                            className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={ca.permissions?.canEditStudents === false ? 'Student editing restricted by Super Admin' : 'Edit'}
                           >
                             <Edit className="w-3.5 h-3.5" />
                           </button>
 
                           <button
                             onClick={() => handleDeleteStudent(student)}
-                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                            title="Delete"
+                            disabled={ca.permissions?.canEditStudents === false}
+                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={ca.permissions?.canEditStudents === false ? 'Student deletion restricted by Super Admin' : 'Delete'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

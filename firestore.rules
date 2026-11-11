@@ -96,6 +96,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Certificate Templates collection (Admin controlled designs and placeholders)
+    match /certificateTemplates/{templateId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Email Templates collection
     match /emailTemplates/{templateId} {
       allow read: if isSignedIn();

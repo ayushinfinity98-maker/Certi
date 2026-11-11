@@ -9,6 +9,13 @@ export interface AdminUser {
   updatedAt?: string;
 }
 
+export interface AmbassadorPermissions {
+  canIssueCertificates: boolean; // default true
+  canImportCsv: boolean; // default true
+  canEditStudents: boolean; // default true
+  canSendEmails: boolean; // default true
+}
+
 export interface CampusAmbassador {
   uid: string;
   caId: string; // e.g. "CA-2026-001"
@@ -22,6 +29,9 @@ export interface CampusAmbassador {
   totalStudents?: number;
   totalCertificates?: number;
   initialPassword?: string; // Stored securely for Admin credential hand-off
+  allowGoogleLogin?: boolean; // Enable direct Google Sign-in with this email
+  googleEmail?: string; // Optional Google account email if different from contact email
+  permissions?: AmbassadorPermissions;
   createdAt: string;
   updatedAt: string;
 }
@@ -111,3 +121,27 @@ export interface CentralEmailSettings {
   smtpUser?: string;
   smtpPasswordMasked?: boolean;
 }
+
+export interface CertificateTemplateConfig {
+  id: string; // e.g. "tpl_gsap_participation_2026"
+  title: string; // e.g. "Official GSAP 2026 Participation Certificate"
+  type: 'standard_google' | 'custom_uploaded';
+  backgroundUrl?: string; // Optional custom certificate background image data URL
+  heading: string; // e.g. "Certificate of Participation"
+  subheading: string; // e.g. "Google Student Ambassador Program 2026"
+  presentationText: string; // e.g. "This certificate is proudly and honorably presented to"
+  bodyText: string; // e.g. "for active and exemplary participation in \"{{initiative_name}}\" organized by the Google Student Ambassador Program 2026 at {{college_name}} ({{semester}})."
+  footerNote: string; // e.g. "Official Program Issuance"
+  showLogo: boolean;
+  showProgramEmblem: boolean;
+  showBorder: boolean;
+  showQrCode: boolean;
+  showSignature: boolean;
+  signatureTitle: string; // e.g. "Campus Ambassador"
+  primaryColor: string; // e.g. "#1A73E8"
+  fontFamily: 'serif' | 'sans';
+  isActive: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+

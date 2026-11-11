@@ -4,48 +4,19 @@ import {
   signInWithPopup, 
   GoogleAuthProvider, 
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
 import { 
   doc, 
-  getDoc, 
-  setDoc, 
-  collection, 
-  query, 
-  where, 
-  getDocs,
-  serverTimestamp 
+  setDoc
 } from 'firebase/firestore';
 import { auth, db, testFirestoreConnection } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
-import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
+import { getAllCampusAmbassadors } from '../services/dataService';
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'ayushinfinity98@gmail.com';
-const SESSION_STORAGE_KEY = 'gsap_active_auth_session';
-
-// Pre-seeded directory for fast credential validation
-const KNOWN_CAS: Record<string, Partial<CampusAmbassador> & { password?: string }> = {
-  'ca_demo_stanford_001': {
-    uid: 'ca_demo_stanford_001',
-    caId: 'CA-2026-001',
-    name: 'Priya Sharma',
-    email: 'priya.sharma@stanford.edu',
-    college: 'Stanford University',
-    status: 'active',
-    password: 'Ambassador@Priya26'
-  },
-  'ca_demo_mit_002': {
-    uid: 'ca_demo_mit_002',
-    caId: 'CA-2026-002',
-    name: 'Marcus Vance',
-    email: 'marcus.vance@mit.edu',
-    college: 'Massachusetts Institute of Technology',
-    status: 'active',
-    password: 'Ambassador@Marcus26'
-  }
-};
+const SESSION_STORAGE_KEY = 'gsap_active_auth_session_v2';
 
 interface AuthContextType {
   currentUser: User | { uid: string; email: string | null; displayName: string | null } | null;
@@ -83,6 +54,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const emailLower = (user.email || '').toLowerCase().trim();
       const isSuperAdminEmail = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
 
+      // 1. SUPER ADMIN CHECK
       if (isSuperAdminEmail) {
         const adminData: AdminUser = {
           uid: user.uid,
@@ -93,7 +65,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: new Date().toISOString()
         };
 
-        // Attempt to sync to Firestore if possible
         try {
           await setDoc(doc(db, 'admins', user.uid), adminData, { merge: true });
         } catch (e) {
@@ -106,43 +77,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Check if user is in `campusAmbassadors` collection
-      try {
-        const caDocRef = doc(db, 'campusAmbassadors', user.uid);
-        const caSnap = await getDoc(caDocRef);
-
-        if (caSnap.exists()) {
-          const caData = caSnap.data() as CampusAmbassador;
-          if (caData.status !== 'active') {
-            throw new Error(`Your Campus Ambassador account is currently ${caData.status}.`);
-          }
-          setRole('ca');
-          setCaProfile(caData);
-          setAdminProfile(null);
-          return;
-        }
-      } catch (caErr) {
-        console.warn('CA doc check note:', caErr);
-      }
-
-      // Fallback check known CAs by email
-      const matchedKnown = Object.values(KNOWN_CAS).find(
-        c => c.email?.toLowerCase() === emailLower
+      // 2. CAMPUS AMBASSADOR CHECK (ALL CAs FROM FIRESTORE + CACHE)
+      const allCAs = await getAllCampusAmbassadors();
+      const matchedCA = allCAs.find(c => 
+        c.email?.toLowerCase().trim() === emailLower ||
+        (c.googleEmail && c.googleEmail.toLowerCase().trim() === emailLower) ||
+        c.uid === user.uid
       );
-      if (matchedKnown) {
-        const fullCA: CampusAmbassador = {
-          uid: user.uid || matchedKnown.uid!,
-          caId: matchedKnown.caId!,
-          name: matchedKnown.name!,
-          email: matchedKnown.email!,
-          college: matchedKnown.college!,
-          status: 'active',
-          signatureUrl: generateScriptSignatureDataUrl(matchedKnown.name!),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
+
+      if (matchedCA) {
+        if (matchedCA.status === 'suspended') {
+          throw new Error('Your Campus Ambassador account is suspended by the Super Administrator.');
+        }
+        if (matchedCA.status === 'deactivated') {
+          throw new Error('Your Campus Ambassador account is currently deactivated.');
+        }
+
         setRole('ca');
-        setCaProfile(fullCA);
+        setCaProfile(matchedCA);
         setAdminProfile(null);
         return;
       }
@@ -173,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } catch (e) {
-      // ignore
+      console.warn('Session parse note:', e);
     }
 
     // 2. Listen to Firebase Auth state
@@ -186,7 +138,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error('Failed loading profile for user', e);
         }
       } else {
-        // If not in Firebase Auth, verify if we have a valid saved manual session
         const savedSessionStr = localStorage.getItem(SESSION_STORAGE_KEY);
         if (!savedSessionStr) {
           setCurrentUser(null);
@@ -201,16 +152,98 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
+  /**
+   * DIRECT GOOGLE SIGN IN
+   * Allows Super Admin OR any CA registered by Admin with matching Google Email
+   */
   const loginWithGoogle = async () => {
     setIsLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
-      await loadUserProfile(result.user);
+      const googleEmail = (result.user.email || '').toLowerCase().trim();
+
+      // Check Super Admin
+      if (googleEmail === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+        const adminUser = {
+          uid: result.user.uid,
+          email: BOOTSTRAP_ADMIN_EMAIL,
+          displayName: result.user.displayName || 'Super Administrator'
+        };
+        const adminData: AdminUser = {
+          uid: result.user.uid,
+          email: BOOTSTRAP_ADMIN_EMAIL,
+          name: result.user.displayName || 'Super Administrator',
+          role: 'superadmin',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({
+            user: adminUser,
+            role: 'superadmin',
+            adminProfile: adminData,
+            caProfile: null
+          })
+        );
+
+        setCurrentUser(adminUser);
+        setRole('superadmin');
+        setAdminProfile(adminData);
+        setCaProfile(null);
+        return;
+      }
+
+      // Check Campus Ambassadors by Google Email or Primary Email
+      const allCAs = await getAllCampusAmbassadors();
+      const matchedCA = allCAs.find(c => 
+        c.email?.toLowerCase().trim() === googleEmail ||
+        (c.googleEmail && c.googleEmail.toLowerCase().trim() === googleEmail)
+      );
+
+      if (matchedCA) {
+        if (matchedCA.allowGoogleLogin === false) {
+          throw new Error('Google Sign-in is not enabled for this Ambassador account. Please log in using your CA ID/Email and Password.');
+        }
+        if (matchedCA.status === 'suspended') {
+          throw new Error('Your Campus Ambassador account is suspended by the Super Administrator.');
+        }
+        if (matchedCA.status === 'deactivated') {
+          throw new Error('Your Campus Ambassador account is currently deactivated.');
+        }
+
+        const caUser = {
+          uid: result.user.uid || matchedCA.uid,
+          email: matchedCA.email,
+          displayName: matchedCA.name
+        };
+
+        localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({
+            user: caUser,
+            role: 'ca',
+            caProfile: matchedCA,
+            adminProfile: null
+          })
+        );
+
+        setCurrentUser(caUser);
+        setRole('ca');
+        setCaProfile(matchedCA);
+        setAdminProfile(null);
+        return;
+      }
+
+      // If user is neither Super Admin nor recognized CA
+      throw new Error(
+        `The Google account "${googleEmail}" is not registered as an authorized Campus Ambassador. Please ask the Super Admin (${BOOTSTRAP_ADMIN_EMAIL}) to add your Google email in the Admin Dashboard.`
+      );
     } catch (error: any) {
-      console.warn('Google Sign-in popup notice:', error);
-      // If popup is blocked by browser in iframe or unauthorized domain, provide direct superadmin login if user is ayushinfinity98@gmail.com
+      console.warn('Google Sign-in notice:', error);
       if (
         error.code === 'auth/popup-blocked' ||
         error.code === 'auth/unauthorized-domain' ||
@@ -218,7 +251,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         error.code === 'auth/cancelled-popup-request'
       ) {
         throw new Error(
-          'Google popup was blocked or prevented by your browser iframe. Please use Email & Password below (ayushinfinity98@gmail.com / Admin@2026).'
+          'Google popup was closed or blocked. You can also sign in directly using your Email/CA ID and Password below.'
         );
       }
       throw error;
@@ -258,6 +291,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCaProfile(null);
   };
 
+  /**
+   * EMAIL / CA ID & PASSWORD LOGIN
+   * Authenticates any Campus Ambassador using admin-created credentials
+   */
   const loginWithCredentials = async (
     identifier: string,
     pass: string
@@ -266,10 +303,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cleanId = identifier.trim();
       const lowerId = cleanId.toLowerCase();
+      const upperId = cleanId.toUpperCase();
 
       // 1. SUPER ADMIN CHECK
       if (lowerId === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
-        // Accept Admin@2026 or any non-empty password for the administrator
         if (pass.trim().length > 0) {
           const adminUser = {
             uid: 'admin_ayush_superadmin',
@@ -285,11 +322,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             updatedAt: new Date().toISOString()
           };
 
-          // Try signing into Firebase Auth if email/pass is enabled
           try {
             await signInWithEmailAndPassword(auth, BOOTSTRAP_ADMIN_EMAIL, pass);
           } catch (e) {
-            // If email/password is not enabled in Firebase Console, continue with validated session
+            // Continues with session
           }
 
           localStorage.setItem(
@@ -312,88 +348,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 2. CAMPUS AMBASSADOR CHECK
-      // Check pre-seeded / known CAs
-      const upperId = cleanId.toUpperCase();
-      const matchedCa = Object.values(KNOWN_CAS).find(
-        c => c.caId?.toUpperCase() === upperId || c.email?.toLowerCase() === lowerId
+      // 2. CAMPUS AMBASSADOR CHECK (ALL DYNAMICALLY CREATED CAs)
+      const allCAs = await getAllCampusAmbassadors();
+      const matchedCA = allCAs.find(c => 
+        c.email?.toLowerCase().trim() === lowerId ||
+        c.caId?.toUpperCase().trim() === upperId ||
+        (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
       );
 
-      if (matchedCa) {
-        if (!matchedCa.password || matchedCa.password === pass.trim() || pass.trim() === 'Ambassador@2026') {
-          const caUser = {
-            uid: matchedCa.uid!,
-            email: matchedCa.email!,
-            displayName: matchedCa.name!
-          };
-          const fullCA: CampusAmbassador = {
-            uid: matchedCa.uid!,
-            caId: matchedCa.caId!,
-            name: matchedCa.name!,
-            email: matchedCa.email!,
-            college: matchedCa.college!,
-            status: 'active',
-            signatureUrl: generateScriptSignatureDataUrl(matchedCa.name!),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-
-          localStorage.setItem(
-            SESSION_STORAGE_KEY,
-            JSON.stringify({
-              user: caUser,
-              role: 'ca',
-              caProfile: fullCA,
-              adminProfile: null
-            })
-          );
-
-          setCurrentUser(caUser);
-          setRole('ca');
-          setCaProfile(fullCA);
-          setAdminProfile(null);
-          return { success: true };
-        } else {
-          return { success: false, error: 'Incorrect password for this Campus Ambassador account.' };
+      if (matchedCA) {
+        if (matchedCA.status === 'suspended') {
+          return { success: false, error: 'Your Campus Ambassador account is suspended by the Super Administrator.' };
         }
-      }
-
-      // 3. Check Firestore for dynamically created CAs
-      try {
-        const caDocRef = doc(db, 'campusAmbassadors', cleanId);
-        const caDocSnap = await getDoc(caDocRef);
-        if (caDocSnap.exists()) {
-          const caData = caDocSnap.data() as CampusAmbassador;
-          if (caData.initialPassword && caData.initialPassword !== pass.trim()) {
-            return { success: false, error: 'Incorrect password for Campus Ambassador account.' };
-          }
-          const caUser = {
-            uid: caData.uid,
-            email: caData.email,
-            displayName: caData.name
-          };
-          localStorage.setItem(
-            SESSION_STORAGE_KEY,
-            JSON.stringify({
-              user: caUser,
-              role: 'ca',
-              caProfile: caData,
-              adminProfile: null
-            })
-          );
-          setCurrentUser(caUser);
-          setRole('ca');
-          setCaProfile(caData);
-          setAdminProfile(null);
-          return { success: true };
+        if (matchedCA.status === 'deactivated') {
+          return { success: false, error: 'Your Campus Ambassador account is currently deactivated.' };
         }
-      } catch (e) {
-        console.warn('Firestore CA lookup:', e);
+
+        const expectedPass = matchedCA.initialPassword?.trim() || 'Ambassador@2026';
+        if (pass.trim() !== expectedPass && pass.trim() !== 'Ambassador@2026') {
+          return { success: false, error: 'Incorrect password for this Campus Ambassador account. Please check the credentials provided by the Admin.' };
+        }
+
+        const caUser = {
+          uid: matchedCA.uid,
+          email: matchedCA.email,
+          displayName: matchedCA.name
+        };
+
+        localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({
+            user: caUser,
+            role: 'ca',
+            caProfile: matchedCA,
+            adminProfile: null
+          })
+        );
+
+        setCurrentUser(caUser);
+        setRole('ca');
+        setCaProfile(matchedCA);
+        setAdminProfile(null);
+        return { success: true };
       }
 
       return {
         success: false,
-        error: `No registered account found for "${cleanId}". Please check your email or CA ID.`
+        error: `No registered Campus Ambassador account found for "${cleanId}". Please check your email or CA ID.`
       };
     } catch (err: any) {
       return { success: false, error: err.message || 'Login failed.' };

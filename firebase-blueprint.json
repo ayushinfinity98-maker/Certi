@@ -30,6 +30,19 @@
         "signatureUpdatedAt": { "type": "string", "format": "date-time", "description": "When signature was last updated" },
         "totalStudents": { "type": "number", "description": "Cached count of students" },
         "totalCertificates": { "type": "number", "description": "Cached count of issued certificates" },
+        "initialPassword": { "type": "string", "description": "Admin provisioned password for account" },
+        "allowGoogleLogin": { "type": "boolean", "description": "Whether CA can directly log in with Google OAuth" },
+        "googleEmail": { "type": "string", "format": "email", "description": "Optional specific Google account email" },
+        "permissions": {
+          "type": "object",
+          "description": "Granular permissions assigned by Super Admin",
+          "properties": {
+            "canIssueCertificates": { "type": "boolean" },
+            "canImportCsv": { "type": "boolean" },
+            "canEditStudents": { "type": "boolean" },
+            "canSendEmails": { "type": "boolean" }
+          }
+        },
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp created" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp updated" }
       },
@@ -131,6 +144,26 @@
       },
       "required": ["actorUid", "action", "timestamp"]
     }
+    "CertificateTemplate": {
+      "title": "CertificateTemplate",
+      "description": "Customizable certificate template with background, typography, and dynamic placeholders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique template identifier" },
+        "title": { "type": "string", "maxLength": 150, "description": "Template title (e.g. Participation, Appreciation)" },
+        "type": { "type": "string", "enum": ["standard_google", "custom_uploaded"], "description": "Design layout type" },
+        "backgroundUrl": { "type": "string", "description": "Uploaded certificate background image or pattern" },
+        "heading": { "type": "string", "maxLength": 100, "description": "Main certificate heading" },
+        "subheading": { "type": "string", "maxLength": 150, "description": "Subheading or program subtitle" },
+        "presentationText": { "type": "string", "maxLength": 150, "description": "Lead-in presentation text" },
+        "bodyText": { "type": "string", "maxLength": 2000, "description": "Template description body with placeholders" },
+        "isActive": { "type": "string", "enum": ["true", "false"], "description": "Whether this template is currently active for issuance" },
+        "primaryColor": { "type": "string", "description": "Accent branding color" },
+        "updatedBy": { "type": "string", "description": "Admin UID who last updated" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "title", "heading"]
+    }
   },
   "firestore": {
     "/admins/{adminUid}": {
@@ -148,6 +181,10 @@
     "/certificates/{certificateId}": {
       "schema": "Certificate",
       "description": "Official issued certificates, readable publicly for verification without revealing student email"
+    },
+    "/certificateTemplates/{templateId}": {
+      "schema": "CertificateTemplate",
+      "description": "Admin-controlled certificate templates with custom backgrounds and placeholders"
     },
     "/emailTemplates/{templateId}": {
       "schema": "EmailTemplate",

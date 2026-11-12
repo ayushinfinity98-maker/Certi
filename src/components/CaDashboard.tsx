@@ -21,7 +21,8 @@ import {
   ExternalLink,
   ShieldCheck,
   Shield,
-  School
+  School,
+  Type
 } from 'lucide-react';
 import { Student, CampusAmbassador, Certificate, EmailLog } from '../types';
 import { 
@@ -38,6 +39,8 @@ import { StudentModal } from './StudentModal';
 import { CsvImportModal } from './CsvImportModal';
 import { BulkIssuanceModal } from './BulkIssuanceModal';
 import { CertificateTemplate } from './CertificateTemplate';
+import { SendEmailModal } from './SendEmailModal';
+import { PlaceholdersModal } from './PlaceholdersModal';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { retryEmailDispatch } from '../services/emailService';
@@ -65,6 +68,8 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [viewingCertificate, setViewingCertificate] = useState<Certificate | null>(null);
   const [issuingSingleStudent, setIssuingSingleStudent] = useState<Student | null>(null);
+  const [emailingStudent, setEmailingStudent] = useState<Student | null>(null);
+  const [isPlaceholdersModalOpen, setIsPlaceholdersModalOpen] = useState(false);
 
   const loadData = async () => {
     try {
@@ -364,6 +369,16 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
 
             <button
               type="button"
+              onClick={() => setIsPlaceholdersModalOpen(true)}
+              className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold shadow-2xs transition flex items-center"
+              title="Add and Position Certificate Placeholders"
+            >
+              <Type className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
+              Add Placeholders
+            </button>
+
+            <button
+              type="button"
               onClick={() => setIsCsvModalOpen(true)}
               disabled={ca.permissions?.canImportCsv === false}
               className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-xl text-xs font-semibold shadow-2xs transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
@@ -494,13 +509,25 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
                       <td className="py-3 px-3 text-right">
                         <div className="flex items-center justify-end space-x-1.5">
                           {isIssued ? (
-                            <button
-                              onClick={() => student.certificateId && handleInspectCertificate(student.certificateId)}
-                              className="px-2 py-1 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center"
-                              title="View Certificate & QR Code"
-                            >
-                              <Eye className="w-3 h-3 mr-1" /> View
-                            </button>
+                            <>
+                              <button
+                                onClick={() => setEmailingStudent(student)}
+                                disabled={ca.permissions?.canSendEmails === false}
+                                className="px-2.5 py-1 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center disabled:opacity-40"
+                                title="Send / Resend Certificate via Email"
+                              >
+                                <Send className="w-3 h-3 mr-1 text-purple-600" />
+                                Send Email
+                              </button>
+
+                              <button
+                                onClick={() => student.certificateId && handleInspectCertificate(student.certificateId)}
+                                className="px-2 py-1 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center"
+                                title="View Certificate & QR Code"
+                              >
+                                <Eye className="w-3 h-3 mr-1" /> View
+                              </button>
+                            </>
                           ) : (
                             <button
                               onClick={() => handleIssueSingle(student)}
@@ -544,6 +571,28 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
         </div>
 
       </div>
+
+      {/* Send Email Modal */}
+      {emailingStudent && (
+        <SendEmailModal
+          isOpen={!!emailingStudent}
+          onClose={() => setEmailingStudent(null)}
+          student={emailingStudent}
+          ca={ca}
+          onSent={loadData}
+        />
+      )}
+
+      {/* Placeholders Modal */}
+      {isPlaceholdersModalOpen && (
+        <PlaceholdersModal
+          isOpen={isPlaceholdersModalOpen}
+          onClose={() => setIsPlaceholdersModalOpen(false)}
+          actorUid={ca.uid}
+          actorEmail={actorEmail}
+          onSaved={loadData}
+        />
+      )}
 
       {/* Student Modal */}
       <StudentModal

@@ -29,7 +29,8 @@ import {
   Move,
   Link,
   QrCode,
-  PenTool
+  PenTool,
+  ExternalLink
 } from 'lucide-react';
 import { processSignatureImageFile } from '../utils/signatureUtils';
 
@@ -450,22 +451,146 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               </div>
             )}
 
-            {/* Google Slides / Google Sheets Link Sync */}
-            <div className="p-3.5 bg-blue-50/50 border border-blue-200/60 rounded-xl space-y-2">
-              <span className="text-xs font-bold text-blue-900 flex items-center">
-                <Link className="w-3.5 h-3.5 mr-1 text-blue-600" />
-                Google Slides / Sheet Connect & Sync
-              </span>
-              <p className="text-[11px] text-gray-600">
-                Optionally link your Google Slides presentation or Google Sheet to sync certificate layout or student records:
+            {/* Google Slides & Marked Placeholders Connect & Sync */}
+            <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-blue-900 flex items-center">
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5 text-blue-600" />
+                  Google Slides / Sheets Certificate Sync
+                </span>
+                <span className="text-[10px] bg-blue-200/80 text-blue-900 font-bold px-2 py-0.5 rounded-full">
+                  Slides & Sheets Integration
+                </span>
+              </div>
+
+              <p className="text-[11px] text-gray-600 leading-relaxed">
+                Connect your Google Slide presentation or Google Sheet containing marked placeholders (e.g. <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{student_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{initiative_name}}'}</code>).
               </p>
-              <input
-                type="url"
-                value={activeConfig.googleSlideUrl || ''}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }))}
-                placeholder="https://docs.google.com/presentation/d/... or /spreadsheets/d/..."
-                className="w-full px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
-              />
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                  Google Slides / Sheets Public Share URL:
+                </label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="url"
+                    value={activeConfig.googleSlideUrl || ''}
+                    onChange={(e) => setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }))}
+                    placeholder="https://docs.google.com/presentation/d/... or /spreadsheets/d/..."
+                    className="flex-1 px-3 py-1.5 bg-white border border-blue-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                  />
+                  {activeConfig.googleSlideUrl && (
+                    <a
+                      href={activeConfig.googleSlideUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 bg-white border border-blue-200 hover:bg-blue-100 rounded-xl text-blue-600 text-xs font-semibold flex items-center transition"
+                      title="Open linked Google Slide"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Sync Slide Marked Placeholders Button */}
+              <div className="pt-1 flex items-center justify-between flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Extract or auto-configure marked placeholders for Google Slide
+                    const slideMarkedElements: CertificateCustomElement[] = [
+                      {
+                        id: 'el_slide_student_name',
+                        type: 'placeholder',
+                        placeholderTag: 'student_name',
+                        label: '{{student_name}} (Google Slide)',
+                        x: 50,
+                        y: 44,
+                        fontSize: 28,
+                        fontWeight: 'bold',
+                        fontFamily: 'serif',
+                        color: '#1A73E8',
+                        textAlign: 'center'
+                      },
+                      {
+                        id: 'el_slide_initiative_name',
+                        type: 'placeholder',
+                        placeholderTag: 'initiative_name',
+                        label: '{{initiative_name}} (Google Slide)',
+                        x: 50,
+                        y: 53,
+                        fontSize: 16,
+                        fontWeight: '600',
+                        fontFamily: 'sans',
+                        color: '#202124',
+                        textAlign: 'center'
+                      },
+                      {
+                        id: 'el_slide_college_name',
+                        type: 'placeholder',
+                        placeholderTag: 'college_name',
+                        label: '{{college_name}} (Google Slide)',
+                        x: 50,
+                        y: 59,
+                        fontSize: 14,
+                        fontWeight: 'normal',
+                        fontFamily: 'sans',
+                        color: '#5F6368',
+                        textAlign: 'center'
+                      },
+                      {
+                        id: 'el_slide_date',
+                        type: 'placeholder',
+                        placeholderTag: 'participation_date',
+                        label: '{{participation_date}} (Google Slide)',
+                        x: 20,
+                        y: 84,
+                        fontSize: 13,
+                        fontWeight: '600',
+                        fontFamily: 'sans',
+                        color: '#202124',
+                        textAlign: 'left'
+                      },
+                      {
+                        id: 'el_slide_qr',
+                        type: 'qr',
+                        label: '{{qr_code}} (Google Slide)',
+                        x: 50,
+                        y: 82,
+                        fontSize: 12,
+                        color: '#1A73E8',
+                        textAlign: 'center'
+                      },
+                      {
+                        id: 'el_slide_sig',
+                        type: 'signature',
+                        label: '{{ca_signature}} (Google Slide)',
+                        x: 80,
+                        y: 84,
+                        fontSize: 13,
+                        color: '#202124',
+                        textAlign: 'right'
+                      }
+                    ];
+
+                    setActiveConfig(prev => ({
+                      ...prev,
+                      elementsMode: 'manual_placed',
+                      customElements: slideMarkedElements
+                    }));
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition flex items-center space-x-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Sync Marked Placeholders from Google Slide</span>
+                </button>
+
+                <span className="text-[10px] text-emerald-700 font-semibold flex items-center">
+                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                  Auto-Detects {'{{tags}}'}
+                </span>
+              </div>
             </div>
           </div>
 

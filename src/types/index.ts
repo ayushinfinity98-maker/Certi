@@ -122,11 +122,31 @@ export interface CentralEmailSettings {
   smtpPasswordMasked?: boolean;
 }
 
+export interface CertificateCustomElement {
+  id: string;
+  type: 'text' | 'placeholder' | 'qr' | 'signature' | 'image';
+  label?: string;
+  placeholderTag?: string; // e.g. "student_name", "initiative_name", "participation_date", "certificate_id", "college_name", "ca_name", "semester"
+  customText?: string;
+  x: number; // percentage 0 - 100
+  y: number; // percentage 0 - 100
+  fontSize?: number; // in pixels (base 14-36)
+  fontWeight?: 'normal' | 'bold' | '600';
+  fontFamily?: 'serif' | 'sans' | 'mono';
+  color?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  width?: number; // percentage or px
+  height?: number;
+}
+
 export interface CertificateTemplateConfig {
   id: string; // e.g. "tpl_gsap_participation_2026"
   title: string; // e.g. "Official GSAP 2026 Participation Certificate"
-  type: 'standard_google' | 'custom_uploaded';
-  backgroundUrl?: string; // Optional custom certificate background image data URL
+  type: 'standard_google' | 'custom_uploaded' | 'blank_plain';
+  backgroundUrl?: string; // Optional custom certificate background image data URL or empty for plain white
+  googleSlideUrl?: string; // Optional Google Slides template link or Google Sheet source
+  elementsMode?: 'auto_layout' | 'manual_placed'; // When manual_placed, strictly renders manual custom elements
+  customElements?: CertificateCustomElement[]; // Manually positioned text boxes & placeholders
   heading: string; // e.g. "Certificate of Participation"
   subheading: string; // e.g. "Google Student Ambassador Program 2026"
   presentationText: string; // e.g. "This certificate is proudly and honorably presented to"

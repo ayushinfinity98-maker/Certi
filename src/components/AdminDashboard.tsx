@@ -33,7 +33,9 @@ import {
   getAdminSystemMetrics,
   getAuditLogsList,
   getStudentsForCA,
-  logCAStatusChange
+  logCAStatusChange,
+  subscribeToAllCampusAmbassadors,
+  subscribeToCertificates
 } from '../services/dataService';
 import { CaModal } from './CaModal';
 import { SignatureModal } from './SignatureModal';
@@ -80,32 +82,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const [inspectingCaStudents, setInspectingCaStudents] = useState<{ ca: CampusAmbassador; students: Student[] } | null>(null);
 
   const loadData = async () => {
-    setIsLoading(true);
     try {
       await checkAndSeedDemoDataIfEmpty();
 
-      const [loadedCas, loadedMetrics, logs, certsSnap, emailLogsSnap] = await Promise.all([
-        getAllCampusAmbassadors(),
+      const [loadedMetrics, logs, emailLogsSnap] = await Promise.all([
         getAdminSystemMetrics(),
         getAuditLogsList(40),
-        getDocs(collection(db, 'certificates')),
         getDocs(collection(db, 'emailLogs'))
       ]);
 
-      setCas(loadedCas);
       setMetrics(loadedMetrics);
       setAuditLogs(logs);
-      setAllCertificates(certsSnap.docs.map(d => d.data() as Certificate));
       setAllEmailLogs(emailLogsSnap.docs.map(d => d.data() as EmailLog));
     } catch (err) {
       console.error('Error loading admin data:', err);
-    } finally {
-      setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    setIsLoading(true);
     loadData();
+
+    // Real-time listener for Campus Ambassadors
+    const unsubCas = subscribeToAllCampusAmbassadors((updatedCas) => {
+      setCas(updatedCas);
+      setIsLoading(false);
+    });
+
+    // Real-time listener for Certificates
+    const unsubCerts = subscribeToCertificates((updatedCerts) => {
+      setAllCertificates(updatedCerts);
+    });
+
+    return () => {
+      unsubCas();
+      unsubCerts();
+    };
   }, []);
 
   const handleSaveCa = async (data: any) => {

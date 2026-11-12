@@ -9,7 +9,9 @@ import {
   query,
   where,
   orderBy,
-  limit
+  limit,
+  onSnapshot,
+  Unsubscribe
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Student, Certificate, CampusAmbassador, EmailLog, AuditLog } from '../types';
@@ -250,6 +252,111 @@ export async function logAuditEvent(
   }
 }
  
+/**
+ * Real-Time Subscriptions ("jo bhi ho vo real time data m chale")
+ */
+export function subscribeToStudentsForCA(
+  caUid: string,
+  onUpdate: (students: Student[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  // Emit initial cached data immediately
+  const cached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+  onUpdate(cached.filter(s => s.caUid === caUid));
+
+  try {
+    const q = query(collection(db, 'students'), where('caUid', '==', caUid));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const fromDb = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
+        // Merge into persistent cache
+        const allCached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+        const map = new Map<string, Student>();
+        allCached.forEach(s => map.set(s.id, s));
+        fromDb.forEach(s => map.set(s.id, s));
+        const merged = Array.from(map.values());
+        saveCache(KEY_STUDENTS, merged);
+        onUpdate(fromDb);
+      },
+      (error) => {
+        console.warn('Real-time students listener warning:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (err: any) {
+    console.warn('Could not attach onSnapshot for students:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToAllCampusAmbassadors(
+  onUpdate: (cas: CampusAmbassador[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  // Emit initial cache immediately
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  onUpdate(cached);
+
+  try {
+    const q = query(collection(db, 'campusAmbassadors'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const fromDb = snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
+          const allCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+          const map = new Map<string, CampusAmbassador>();
+          allCached.forEach(c => map.set(c.uid, c));
+          fromDb.forEach(c => map.set(c.uid, c));
+          const merged = Array.from(map.values());
+          saveCache(KEY_CAS, merged);
+          onUpdate(merged);
+        }
+      },
+      (error) => {
+        console.warn('Real-time campus ambassadors listener warning:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (err: any) {
+    console.warn('Could not attach onSnapshot for ambassadors:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToCertificates(
+  onUpdate: (certs: Certificate[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const cached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
+  onUpdate(cached);
+
+  try {
+    const q = query(collection(db, 'certificates'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const fromDb = snapshot.docs.map(d => ({ ...d.data(), certificateId: d.id } as Certificate));
+        const allCached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
+        const map = new Map<string, Certificate>();
+        allCached.forEach(c => map.set(c.certificateId, c));
+        fromDb.forEach(c => map.set(c.certificateId, c));
+        const merged = Array.from(map.values());
+        saveCache(KEY_CERTS, merged);
+        onUpdate(merged);
+      },
+      (error) => {
+        console.warn('Real-time certificates listener warning:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (err: any) {
+    console.warn('Could not attach onSnapshot for certificates:', err);
+    return () => {};
+  }
+}
+
 /**
  * CA Student Management
  */

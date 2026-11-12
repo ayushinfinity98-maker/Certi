@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import jsPDF from 'jspdf';
-import { Certificate } from '../types';
+import { Certificate, CertificateTemplateConfig, CertificateCustomElement } from '../types';
 import { getActiveCertificateTemplate, populateCertificatePlaceholders } from '../services/certificateTemplateService';
 
 /**
@@ -45,8 +45,8 @@ export async function renderCertificateToCanvas(
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
 
-  // Check if custom uploaded background is provided
-  if (tpl?.type === 'custom_uploaded' && tpl.backgroundUrl) {
+  // 1. Draw custom background image if provided (or plain white if blank_plain)
+  if (tpl?.backgroundUrl) {
     try {
       const bgImg = new Image();
       bgImg.crossOrigin = 'anonymous';
@@ -59,80 +59,141 @@ export async function renderCertificateToCanvas(
     } catch (e) {
       console.warn('Could not draw custom certificate background onto canvas', e);
     }
-  } else {
-    // Subtle watermark background grid/geometry
+  }
+
+  const isManualMode = tpl?.elementsMode === 'manual_placed' || tpl?.type === 'blank_plain';
+
+  // If in manual mode with placed custom elements:
+  if (isManualMode && tpl?.customElements && tpl.customElements.length > 0) {
+    const values: Record<string, string> = {
+      student_name: cert.studentName,
+      initiative_name: cert.initiativeName,
+      college_name: cert.college,
+      semester: cert.semester,
+      participation_date: cert.participationDate,
+      certificate_id: cert.certificateId,
+      ca_name: cert.caName
+    };
+
+    for (const el of tpl.customElements) {
+      const elX = (el.x / 100) * width;
+      const elY = (el.y / 100) * height;
+      const scale = 2.4; // scaling factor for 2400x1696 canvas relative to preview
+      const fontSize = Math.round((el.fontSize || 16) * scale);
+
+      ctx.save();
+      ctx.textAlign = el.textAlign || 'center';
+
+      if (el.type === 'placeholder' || el.type === 'text') {
+        const textToDraw = el.type === 'placeholder'
+          ? (values[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`)
+          : (el.customText || '');
+
+        const fontFam = el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'Google Sans, Inter, sans-serif';
+        const fontW = el.fontWeight === 'bold' ? 'bold' : el.fontWeight === '600' ? '600' : 'normal';
+        ctx.font = `${fontW} ${fontSize}px ${fontFam}`;
+        ctx.fillStyle = el.color || '#202124';
+        ctx.fillText(textToDraw, elX, elY);
+      } else if (el.type === 'qr') {
+        try {
+          const qrImg = new Image();
+          qrImg.src = qrDataUrl;
+          await new Promise(r => { qrImg.onload = r; qrImg.onerror = r; });
+          const qrW = 160;
+          ctx.drawImage(qrImg, elX - (qrW / 2), elY - (qrW / 2), qrW, qrW);
+
+          ctx.font = 'bold 20px "Google Sans", monospace';
+          ctx.fillStyle = el.color || '#1A73E8';
+          ctx.fillText(`ID: ${cert.certificateId}`, elX, elY + (qrW / 2) + 26);
+        } catch (e) {
+          console.warn('QR render error:', e);
+        }
+      } else if (el.type === 'signature') {
+        if (cert.signatureUrl) {
+          try {
+            const sigImg = new Image();
+            sigImg.crossOrigin = 'anonymous';
+            sigImg.src = cert.signatureUrl;
+            await new Promise(r => { sigImg.onload = r; sigImg.onerror = r; });
+            const sigW = 280;
+            const sigH = 80;
+            ctx.drawImage(sigImg, elX - (sigW / 2), elY - sigH, sigW, sigH);
+          } catch (e) {
+            console.warn('Sig render error:', e);
+          }
+        }
+        // Underline and ca name
+        ctx.strokeStyle = '#9AA0A6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(elX - 140, elY + 5);
+        ctx.lineTo(elX + 140, elY + 5);
+        ctx.stroke();
+
+        ctx.font = 'bold 26px "Google Sans", Inter, sans-serif';
+        ctx.fillStyle = '#202124';
+        ctx.fillText(cert.caName, elX, elY + 36);
+
+        ctx.font = '600 18px "Google Sans", Inter, sans-serif';
+        ctx.fillStyle = '#1A73E8';
+        ctx.fillText(tpl?.signatureTitle || 'Campus Ambassador', elX, elY + 62);
+      }
+
+      ctx.restore();
+    }
+
+    return canvas;
+  }
+
+  // --- STANDARD GOOGLE TEMPLATE AUTO-LAYOUT ---
+  // Multi-color Google Border (Blue, Red, Yellow, Green) if enabled
+  if (tpl?.showBorder !== false && tpl?.type === 'standard_google') {
+    const borderWidth = 24;
+    const radius = 32;
+    const margin = 50;
+
     ctx.save();
-    ctx.strokeStyle = '#F1F5F9';
-    ctx.lineWidth = 1.5;
-    for (let i = 80; i < width; i += 120) {
-      ctx.beginPath();
-      ctx.moveTo(i, 80);
-      ctx.lineTo(i, height - 80);
-      ctx.stroke();
-    }
-    for (let j = 80; j < height; j += 120) {
-      ctx.beginPath();
-      ctx.moveTo(80, j);
-      ctx.lineTo(width - 80, j);
-      ctx.stroke();
-    }
+    ctx.strokeStyle = '#4285F4';
+    ctx.lineWidth = borderWidth;
+    ctx.beginPath();
+    ctx.moveTo(margin + radius, margin);
+    ctx.lineTo(width / 2, margin);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#EA4335';
+    ctx.beginPath();
+    ctx.moveTo(width / 2, margin);
+    ctx.lineTo(width - margin - radius, margin);
+    ctx.arcTo(width - margin, margin, width - margin, margin + radius, radius);
+    ctx.lineTo(width - margin, height / 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#FBBC05';
+    ctx.beginPath();
+    ctx.moveTo(width - margin, height / 2);
+    ctx.lineTo(width - margin, height - margin - radius);
+    ctx.arcTo(width - margin, height - margin, width - margin - radius, height - margin, radius);
+    ctx.lineTo(width / 2, height - margin);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#34A853';
+    ctx.beginPath();
+    ctx.moveTo(width / 2, height - margin);
+    ctx.lineTo(margin + radius, height - margin);
+    ctx.arcTo(margin, height - margin, margin, height - margin - radius, radius);
+    ctx.lineTo(margin, margin + radius);
+    ctx.arcTo(margin, margin, margin + radius, margin, radius);
+    ctx.stroke();
     ctx.restore();
 
-    // Multi-color Google Border (Blue, Red, Yellow, Green) if enabled
-    if (tpl?.showBorder !== false) {
-      const borderWidth = 24;
-      const radius = 32;
-      const margin = 50;
-
-      ctx.save();
-      // Top border: Google Blue (#4285F4)
-      ctx.strokeStyle = '#4285F4';
-      ctx.lineWidth = borderWidth;
-      ctx.beginPath();
-      ctx.moveTo(margin + radius, margin);
-      ctx.lineTo(width / 2, margin);
-      ctx.stroke();
-
-      // Top right & Right top: Google Red (#EA4335)
-      ctx.strokeStyle = '#EA4335';
-      ctx.beginPath();
-      ctx.moveTo(width / 2, margin);
-      ctx.lineTo(width - margin - radius, margin);
-      ctx.arcTo(width - margin, margin, width - margin, margin + radius, radius);
-      ctx.lineTo(width - margin, height / 2);
-      ctx.stroke();
-
-      // Right bottom & Bottom right: Google Yellow (#FBBC05)
-      ctx.strokeStyle = '#FBBC05';
-      ctx.beginPath();
-      ctx.moveTo(width - margin, height / 2);
-      ctx.lineTo(width - margin, height - margin - radius);
-      ctx.arcTo(width - margin, height - margin, width - margin - radius, height - margin, radius);
-      ctx.lineTo(width / 2, height - margin);
-      ctx.stroke();
-
-      // Bottom left & Left: Google Green (#34A853)
-      ctx.strokeStyle = '#34A853';
-      ctx.beginPath();
-      ctx.moveTo(width / 2, height - margin);
-      ctx.lineTo(margin + radius, height - margin);
-      ctx.arcTo(margin, height - margin, margin, height - margin - radius, radius);
-      ctx.lineTo(margin, margin + radius);
-      ctx.arcTo(margin, margin, margin + radius, margin, radius);
-      ctx.stroke();
-      ctx.restore();
-
-      // Inner subtle gold/navy border line
-      ctx.save();
-      ctx.strokeStyle = '#CBD5E1';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(margin + 20, margin + 20, width - (margin * 2) - 40, height - (margin * 2) - 40);
-      ctx.restore();
-    }
+    ctx.save();
+    ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(margin + 20, margin + 20, width - (margin * 2) - 40, height - (margin * 2) - 40);
+    ctx.restore();
   }
 
   // TOP HEADER: Google Logo (Left) and Program Logo / Badge (Right)
-  // 1. Google Brand text (Left)
   if (tpl?.showLogo !== false) {
     ctx.save();
     ctx.font = 'bold 54px "Google Sans", Inter, sans-serif';
@@ -151,7 +212,7 @@ export async function renderCertificateToCanvas(
     ctx.restore();
   }
 
-  // 2. Program Emblem / Badge (Right)
+  // Program Emblem
   if (tpl?.showProgramEmblem !== false) {
     ctx.save();
     const badgeX = width - 260;
@@ -196,7 +257,6 @@ export async function renderCertificateToCanvas(
   ctx.fillStyle = '#1A73E8';
   ctx.fillText(cert.studentName, width / 2, 590);
 
-  // Decorative underline under name
   const nameWidth = ctx.measureText(cert.studentName).width;
   ctx.strokeStyle = '#FBBC05';
   ctx.lineWidth = 5;
@@ -217,7 +277,6 @@ export async function renderCertificateToCanvas(
     ca_name: cert.caName
   });
 
-  // Multiline wrapping
   ctx.font = '400 34px "Google Sans", Inter, sans-serif';
   ctx.fillStyle = '#3C4043';
   
@@ -246,7 +305,6 @@ export async function renderCertificateToCanvas(
   // BOTTOM SECTION: Date, QR Code, Authorized Signature
   const bottomY = 1250;
 
-  // 1. Left: Date of Participation & Program Verification Seal
   ctx.save();
   ctx.textAlign = 'left';
   ctx.font = '600 24px "Google Sans", Inter, sans-serif';
@@ -270,7 +328,6 @@ export async function renderCertificateToCanvas(
   ctx.fillText(`Initiative: ${cert.initiativeName.substring(0, 32)}`, 140, bottomY + 125);
   ctx.restore();
 
-  // 2. Center: QR Code & Unique Certificate ID
   if (tpl?.showQrCode !== false) {
     ctx.save();
     ctx.textAlign = 'center';
@@ -296,7 +353,6 @@ export async function renderCertificateToCanvas(
     ctx.restore();
   }
 
-  // 3. Right: Authorized Signature of the specific Campus Ambassador
   if (tpl?.showSignature !== false) {
     ctx.save();
     const sigX = width - 560;
@@ -318,7 +374,6 @@ export async function renderCertificateToCanvas(
       }
     }
 
-    // Signature line
     ctx.strokeStyle = '#9AA0A6';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -351,7 +406,6 @@ export async function downloadCertificatePdf(cert: Certificate): Promise<void> {
   const qrDataUrl = await generateVerificationQr(cert.certificateId);
   const canvas = await renderCertificateToCanvas(cert, qrDataUrl);
   
-  // A4 Landscape dimensions in mm: 297 x 210
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CertificateTemplateConfig, Certificate } from '../types';
+import { CertificateTemplateConfig, Certificate, CertificateCustomElement } from '../types';
 import { 
   getAllCertificateTemplates, 
   saveCertificateTemplate, 
@@ -7,7 +7,6 @@ import {
   DEFAULT_TEMPLATES,
   populateCertificatePlaceholders
 } from '../services/certificateTemplateService';
-import { CertificateTemplate } from './CertificateTemplate';
 import { 
   Award, 
   Upload, 
@@ -18,13 +17,19 @@ import {
   Palette, 
   Type, 
   ShieldCheck, 
-  Image, 
+  Image as ImageIcon, 
   Check, 
   Trash2, 
   Plus, 
   RotateCcw,
   Sliders,
-  Layers
+  Layers,
+  FileSpreadsheet,
+  Square,
+  Move,
+  Link,
+  QrCode,
+  PenTool
 } from 'lucide-react';
 import { processSignatureImageFile } from '../utils/signatureUtils';
 
@@ -39,7 +44,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   const [activeConfig, setActiveConfig] = useState<CertificateTemplateConfig>(DEFAULT_TEMPLATES[0]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [previewMode, setPreviewMode] = useState<'editor' | 'fullscreen'>('editor');
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
 
   const loadTemplates = async () => {
     const list = await getAllCertificateTemplates();
@@ -57,30 +62,110 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     setSelectedTemplateId(tpl.id);
     setActiveConfig({ ...tpl });
     setSaveSuccess(false);
+    setSelectedElementId(null);
   };
 
-  const handleCreateNewTemplate = () => {
-    const newId = `tpl_custom_${Date.now()}`;
+  const handleCreatePlainBlankTemplate = () => {
+    const newId = `tpl_plain_${Date.now()}`;
     const newConfig: CertificateTemplateConfig = {
       id: newId,
-      title: 'New Custom Certificate Template',
-      type: 'standard_google',
-      heading: 'Certificate of Achievement',
-      subheading: 'Google Student Ambassador Program 2026',
-      presentationText: 'This certificate is proudly presented to',
-      bodyText: 'for active and exemplary participation in "{{initiative_name}}" organized under the Google Student Ambassador Program 2026 at {{college_name}} ({{semester}}).',
-      footerNote: 'Official Program Issuance',
-      showLogo: true,
-      showProgramEmblem: true,
-      showBorder: true,
+      title: 'Blank Certificate (Plain Canvas)',
+      type: 'blank_plain',
+      backgroundUrl: '',
+      elementsMode: 'manual_placed',
+      customElements: [
+        {
+          id: 'el_student_name',
+          type: 'placeholder',
+          placeholderTag: 'student_name',
+          label: 'Student Name',
+          x: 50,
+          y: 44,
+          fontSize: 28,
+          fontWeight: 'bold',
+          fontFamily: 'serif',
+          color: '#1A73E8',
+          textAlign: 'center'
+        },
+        {
+          id: 'el_initiative_name',
+          type: 'placeholder',
+          placeholderTag: 'initiative_name',
+          label: 'Initiative / Event',
+          x: 50,
+          y: 54,
+          fontSize: 16,
+          fontWeight: '600',
+          fontFamily: 'sans',
+          color: '#202124',
+          textAlign: 'center'
+        },
+        {
+          id: 'el_college',
+          type: 'placeholder',
+          placeholderTag: 'college_name',
+          label: 'College / Institution',
+          x: 50,
+          y: 60,
+          fontSize: 14,
+          fontWeight: 'normal',
+          fontFamily: 'sans',
+          color: '#5F6368',
+          textAlign: 'center'
+        },
+        {
+          id: 'el_date',
+          type: 'placeholder',
+          placeholderTag: 'participation_date',
+          label: 'Date',
+          x: 20,
+          y: 84,
+          fontSize: 13,
+          fontWeight: '600',
+          fontFamily: 'sans',
+          color: '#202124',
+          textAlign: 'left'
+        },
+        {
+          id: 'el_qr',
+          type: 'qr',
+          label: 'Verification QR Code',
+          x: 50,
+          y: 82,
+          fontSize: 12,
+          color: '#1A73E8',
+          textAlign: 'center',
+          width: 60,
+          height: 60
+        },
+        {
+          id: 'el_sig',
+          type: 'signature',
+          label: 'CA Signature',
+          x: 80,
+          y: 84,
+          fontSize: 13,
+          color: '#202124',
+          textAlign: 'right'
+        }
+      ],
+      heading: '',
+      subheading: '',
+      presentationText: '',
+      bodyText: '',
+      footerNote: '',
+      showLogo: false,
+      showProgramEmblem: false,
+      showBorder: false,
       showQrCode: true,
       showSignature: true,
       signatureTitle: 'Campus Ambassador',
       primaryColor: '#1A73E8',
-      fontFamily: 'serif',
-      isActive: false,
+      fontFamily: 'sans',
+      isActive: true,
       updatedAt: new Date().toISOString()
     };
+
     setTemplates(prev => [...prev, newConfig]);
     setSelectedTemplateId(newId);
     setActiveConfig(newConfig);
@@ -94,11 +179,51 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       setActiveConfig(prev => ({
         ...prev,
         type: 'custom_uploaded',
-        backgroundUrl: dataUrl
+        backgroundUrl: dataUrl,
+        showBorder: false // user requested clean plain without auto decorations
       }));
     } catch (err) {
       console.error('Failed reading certificate background image:', err);
     }
+  };
+
+  const handleAddManualElement = (tag: string, label: string, type: 'placeholder' | 'text' | 'qr' | 'signature') => {
+    const newEl: CertificateCustomElement = {
+      id: `el_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type,
+      label,
+      placeholderTag: type === 'placeholder' ? tag : undefined,
+      customText: type === 'text' ? 'Custom Text Box' : undefined,
+      x: 50,
+      y: 50,
+      fontSize: 16,
+      fontWeight: '600',
+      fontFamily: 'sans',
+      color: '#202124',
+      textAlign: 'center'
+    };
+
+    setActiveConfig(prev => ({
+      ...prev,
+      elementsMode: 'manual_placed',
+      customElements: [...(prev.customElements || []), newEl]
+    }));
+    setSelectedElementId(newEl.id);
+  };
+
+  const handleUpdateElement = (id: string, updates: Partial<CertificateCustomElement>) => {
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).map(el => el.id === id ? { ...el, ...updates } : el)
+    }));
+  };
+
+  const handleDeleteElement = (id: string) => {
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).filter(el => el.id !== id)
+    }));
+    if (selectedElementId === id) setSelectedElementId(null);
   };
 
   const handleSave = async () => {
@@ -116,41 +241,23 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     }
   };
 
-  const handleSetActiveNow = async (templateId: string) => {
-    await setActiveCertificateTemplate(templateId, adminUid, adminEmail);
-    await loadTemplates();
-  };
-
-  const insertPlaceholder = (tag: string) => {
-    setActiveConfig(prev => ({
-      ...prev,
-      bodyText: prev.bodyText + ` {{${tag}}}`
-    }));
-  };
-
-  // Mock certificate instance for real-time preview
-  const sampleCertificate: Certificate = {
-    certificateId: 'GSAP-2026-CA001-A9F82',
-    studentId: 'sample_student_01',
-    studentName: 'Alex Rivera',
-    initiativeName: 'Google Cloud & AI Innovation Summit 2026',
+  // Sample values for real-time live preview
+  const sampleValues = {
+    student_name: 'Alex Rivera',
+    initiative_name: 'Google Cloud & AI Innovation Summit 2026',
+    college_name: 'Stanford University',
     semester: 'Semester 6',
-    college: 'Stanford University',
-    participationDate: '2026-11-10',
-    caUid: 'ca_demo_stanford_001',
-    caName: 'Priya Sharma',
-    caId: 'CA-2026-001',
-    signatureUrl: '',
-    programName: 'Google Student Ambassador Program 2026',
-    status: 'valid',
-    verificationUrl: 'https://google-student-ambassador-2026.web.app/verify/GSAP-2026-CA001-A9F82',
-    issuedAt: new Date().toISOString()
+    participation_date: '2026-11-10',
+    certificate_id: 'GSAP-2026-CA001-A9F82',
+    ca_name: 'Priya Sharma'
   };
+
+  const selectedElement = (activeConfig.customElements || []).find(e => e.id === selectedElementId);
 
   return (
     <div className="space-y-6">
       
-      {/* Top Banner & Actions */}
+      {/* Top Banner & Control Actions */}
       <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between flex-wrap gap-4">
         <div>
           <div className="flex items-center space-x-2">
@@ -159,10 +266,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-gray-900">
-                Certificate Templates & Placeholder Designer
+                Plain Certificate & Manual Textbox / Placemarker Designer
               </h2>
               <p className="text-xs text-gray-500">
-                Super Admin can upload certificate designs, customize dynamic placeholders, and select the active template for all Ambassadors.
+                Upload plain/blank certificates, add custom manual textboxes & placeholders anywhere on canvas, or sync Google Slides/Sheets.
               </p>
             </div>
           </div>
@@ -171,11 +278,11 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
         <div className="flex items-center space-x-2.5">
           <button
             type="button"
-            onClick={handleCreateNewTemplate}
-            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition flex items-center shadow-2xs"
+            onClick={handleCreatePlainBlankTemplate}
+            className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold rounded-xl transition flex items-center shadow-2xs"
           >
-            <Plus className="w-4 h-4 mr-1.5 text-gray-600" />
-            Create / Upload New
+            <Square className="w-4 h-4 mr-1.5 text-emerald-600" />
+            + New Plain Blank Canvas
           </button>
 
           <button
@@ -193,11 +300,11 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       {saveSuccess && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center space-x-2 text-xs text-emerald-800 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Certificate template saved permanently in database! All Campus Ambassadors will immediately use this design.</span>
+          <span>Certificate template saved permanently in Firestore! All Campus Ambassadors will instantly use this layout.</span>
         </div>
       )}
 
-      {/* Template Selector Bar */}
+      {/* Template Selector Library Bar */}
       <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center space-x-3 overflow-x-auto">
         <span className="text-xs font-bold text-gray-500 uppercase tracking-wider shrink-0">
           Template Library:
@@ -225,13 +332,13 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
         </div>
       </div>
 
-      {/* Editor Grid: Controls on Left, Live Certificate Preview on Right */}
+      {/* Editor Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* LEFT COLUMN: Controls & Placeholders (5 columns) */}
+        {/* Left Column: Manual Textbox & Background Controls (5 cols) */}
         <div className="lg:col-span-5 space-y-5">
           
-          {/* Section 1: Template Info & Active Status */}
+          {/* Section 1: Template Settings & Background Upload */}
           <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-gray-100">
               <span className="text-xs font-bold text-gray-800 flex items-center">
@@ -246,14 +353,14 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
                 />
                 <span className="text-xs font-bold text-emerald-700">
-                  Set as Active Template
+                  Set as Active
                 </span>
               </label>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">
-                Template Title
+                Template Name
               </label>
               <input
                 type="text"
@@ -263,242 +370,362 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               />
             </div>
 
-            {/* Type selector: Google Quad Frame vs Custom Uploaded Background */}
+            {/* Base Type: Plain Blank Canvas vs Upload Custom Background vs Standard */}
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                Design & Background Type
+                Certificate Canvas Type
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'standard_google' }))}
-                  className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center space-x-1.5 transition ${
+                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'blank_plain', elementsMode: 'manual_placed', showBorder: false, showLogo: false }))}
+                  className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
+                    activeConfig.type === 'blank_plain'
+                      ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
+                      : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Square className="w-4 h-4" />
+                  <span>Plain Blank</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'custom_uploaded', elementsMode: 'manual_placed', showBorder: false }))}
+                  className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
+                    activeConfig.type === 'custom_uploaded'
+                      ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
+                      : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Upload Image</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'standard_google', elementsMode: 'auto_layout', showBorder: true, showLogo: true }))}
+                  className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
                     activeConfig.type === 'standard_google'
                       ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
                       : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>Google Quad Border</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'custom_uploaded' }))}
-                  className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center space-x-1.5 transition ${
-                    activeConfig.type === 'custom_uploaded'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
-                      : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <Image className="w-4 h-4" />
-                  <span>Custom Uploaded Base</span>
+                  <span>Google Quad</span>
                 </button>
               </div>
             </div>
 
-            {/* Upload Certificate Image if custom_uploaded selected */}
-            {activeConfig.type === 'custom_uploaded' && (
-              <div className="p-3.5 bg-blue-50/50 border border-blue-200/60 rounded-xl space-y-2">
-                <span className="text-xs font-bold text-blue-900 block">
-                  Upload Certificate Background (PNG/JPG)
+            {/* Background Upload Field */}
+            {(activeConfig.type === 'custom_uploaded' || activeConfig.type === 'blank_plain') && (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-gray-800 block">
+                  Custom Certificate Background Image (PNG/JPG)
                 </span>
-                <label className="cursor-pointer px-3.5 py-2 bg-white text-blue-700 border border-blue-300 rounded-lg text-xs font-bold hover:bg-blue-50 transition shadow-2xs flex items-center justify-center space-x-2">
-                  <Upload className="w-4 h-4" />
-                  <span>Select Background Image</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    className="hidden"
-                    onChange={handleBackgroundUpload}
-                  />
-                </label>
-                {activeConfig.backgroundUrl && (
-                  <p className="text-[11px] text-emerald-700 flex items-center">
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                    Custom background uploaded and active
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Section 2: Placeholder & Text Customization */}
-          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4">
-            <span className="text-xs font-bold text-gray-800 flex items-center pb-2 border-b border-gray-100">
-              <Type className="w-4 h-4 text-blue-600 mr-1.5" />
-              Certificate Typography & Headings
-            </span>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Main Certificate Heading
-              </label>
-              <input
-                type="text"
-                value={activeConfig.heading}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, heading: e.target.value }))}
-                placeholder="e.g. Certificate of Participation"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Subheading / Program Title
-              </label>
-              <input
-                type="text"
-                value={activeConfig.subheading}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, subheading: e.target.value }))}
-                placeholder="e.g. Google Student Ambassador Program 2026"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Presentation Text (Before Student Name)
-              </label>
-              <input
-                type="text"
-                value={activeConfig.presentationText}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, presentationText: e.target.value }))}
-                placeholder="e.g. This certificate is proudly and honorably presented to"
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-gray-700">
-                  Participation Description (with Dynamic Placeholders)
-                </label>
-              </div>
-              <textarea
-                rows={4}
-                value={activeConfig.bodyText}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, bodyText: e.target.value }))}
-                className="w-full p-2.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden leading-relaxed"
-              />
-
-              {/* Clickable Placeholders Chips */}
-              <div className="mt-2 space-y-1.5">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                  Click to insert placeholder:
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    'student_name',
-                    'initiative_name',
-                    'college_name',
-                    'semester',
-                    'participation_date',
-                    'certificate_id',
-                    'ca_name'
-                  ].map(tag => (
+                <p className="text-[11px] text-gray-500">
+                  Select your own clean, pre-designed or blank certificate image to place placeholders on top.
+                </p>
+                <div className="flex items-center space-x-2">
+                  <label className="cursor-pointer px-3 py-1.5 bg-white text-blue-700 border border-blue-300 rounded-lg text-xs font-bold hover:bg-blue-50 transition shadow-2xs flex items-center space-x-1.5">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload Background</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      className="hidden"
+                      onChange={handleBackgroundUpload}
+                    />
+                  </label>
+                  {activeConfig.backgroundUrl && (
                     <button
-                      key={tag}
                       type="button"
-                      onClick={() => insertPlaceholder(tag)}
-                      className="px-2 py-0.5 rounded bg-slate-100 hover:bg-blue-100 text-[10px] font-mono text-blue-700 border border-slate-200 transition"
+                      onClick={() => setActiveConfig(prev => ({ ...prev, backgroundUrl: '' }))}
+                      className="text-xs text-red-600 hover:underline"
                     >
-                      +{tag}
+                      Remove Background
                     </button>
-                  ))}
+                  )}
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Visual Toggles & Elements */}
-            <div className="pt-2 border-t border-gray-100 space-y-2">
-              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">
-                Visual Elements On Certificate:
+            {/* Google Slides / Google Sheets Link Sync */}
+            <div className="p-3.5 bg-blue-50/50 border border-blue-200/60 rounded-xl space-y-2">
+              <span className="text-xs font-bold text-blue-900 flex items-center">
+                <Link className="w-3.5 h-3.5 mr-1 text-blue-600" />
+                Google Slides / Sheet Connect & Sync
               </span>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={activeConfig.showLogo}
-                    onChange={(e) => setActiveConfig(prev => ({ ...prev, showLogo: e.target.checked }))}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Google Logo</span>
-                </label>
+              <p className="text-[11px] text-gray-600">
+                Optionally link your Google Slides presentation or Google Sheet to sync certificate layout or student records:
+              </p>
+              <input
+                type="url"
+                value={activeConfig.googleSlideUrl || ''}
+                onChange={(e) => setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }))}
+                placeholder="https://docs.google.com/presentation/d/... or /spreadsheets/d/..."
+                className="w-full px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+              />
+            </div>
+          </div>
 
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={activeConfig.showProgramEmblem}
-                    onChange={(e) => setActiveConfig(prev => ({ ...prev, showProgramEmblem: e.target.checked }))}
-                    className="rounded text-blue-600"
-                  />
-                  <span>2026 Program Emblem</span>
-                </label>
-
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={activeConfig.showQrCode}
-                    onChange={(e) => setActiveConfig(prev => ({ ...prev, showQrCode: e.target.checked }))}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Verification QR Code</span>
-                </label>
-
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={activeConfig.showSignature}
-                    onChange={(e) => setActiveConfig(prev => ({ ...prev, showSignature: e.target.checked }))}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Ambassador Signature</span>
-                </label>
-              </div>
+          {/* Section 2: Manual Textbox & Placeholder Placemarkers */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <span className="text-xs font-bold text-gray-800 flex items-center">
+                <Type className="w-4 h-4 text-blue-600 mr-1.5" />
+                Placeholders & Text Boxes on Certificate
+              </span>
+              <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
+                {(activeConfig.customElements || []).length} Elements
+              </span>
             </div>
 
-            {/* Custom Signature Title */}
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Authorized Signer Title
-              </label>
-              <input
-                type="text"
-                value={activeConfig.signatureTitle}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, signatureTitle: e.target.value }))}
-                placeholder="e.g. Campus Ambassador"
-                className="w-full px-3 py-1.5 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-              />
+            <p className="text-[11px] text-gray-500">
+              Click any element below to add it to your certificate canvas, then adjust its position, font size, and color.
+            </p>
+
+            {/* Quick Add Buttons */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('student_name', 'Student Name', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ Student Name</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('initiative_name', 'Initiative Name', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ Initiative / Event</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('college_name', 'College Name', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ College Name</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('participation_date', 'Participation Date', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ Participation Date</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('certificate_id', 'Certificate ID', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ Certificate ID</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('', 'Custom Text Box', 'text')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>+ Custom Text Box</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('', 'QR Code', 'qr')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <QrCode className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                <span>+ Verification QR</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('', 'CA Signature', 'signature')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <PenTool className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>+ CA Signature</span>
+              </button>
+            </div>
+
+            {/* Selected Element Editor Panel */}
+            {selectedElement ? (
+              <div className="p-4 bg-blue-50/40 border border-blue-200 rounded-2xl space-y-3 animate-in fade-in">
+                <div className="flex items-center justify-between pb-2 border-b border-blue-100">
+                  <span className="text-xs font-bold text-blue-900">
+                    Editing: {selectedElement.label || selectedElement.type}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteElement(selectedElement.id)}
+                    className="text-red-600 hover:text-red-800 text-xs flex items-center"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" />
+                    Delete
+                  </button>
+                </div>
+
+                {selectedElement.type === 'text' && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                      Text Box Content
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedElement.customText || ''}
+                      onChange={(e) => handleUpdateElement(selectedElement.id, { customText: e.target.value })}
+                      className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs"
+                    />
+                  </div>
+                )}
+
+                {/* X & Y Sliders */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex justify-between text-[11px] font-semibold text-gray-600 mb-1">
+                      <span>Horizontal (X):</span>
+                      <span>{selectedElement.x}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={selectedElement.x}
+                      onChange={(e) => handleUpdateElement(selectedElement.id, { x: Number(e.target.value) })}
+                      className="w-full accent-blue-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] font-semibold text-gray-600 mb-1">
+                      <span>Vertical (Y):</span>
+                      <span>{selectedElement.y}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={selectedElement.y}
+                      onChange={(e) => handleUpdateElement(selectedElement.id, { y: Number(e.target.value) })}
+                      className="w-full accent-blue-600"
+                    />
+                  </div>
+                </div>
+
+                {/* Font Size & Color */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 mb-1">
+                      Font Size
+                    </label>
+                    <input
+                      type="number"
+                      min="10"
+                      max="60"
+                      value={selectedElement.fontSize || 16}
+                      onChange={(e) => handleUpdateElement(selectedElement.id, { fontSize: Number(e.target.value) })}
+                      className="w-full px-2 py-1 bg-white border border-gray-300 rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 mb-1">
+                      Font Color
+                    </label>
+                    <input
+                      type="color"
+                      value={selectedElement.color || '#202124'}
+                      onChange={(e) => handleUpdateElement(selectedElement.id, { color: e.target.value })}
+                      className="w-full h-7 bg-white border border-gray-300 rounded-lg cursor-pointer p-0.5"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 mb-1">
+                      Align
+                    </label>
+                    <select
+                      value={selectedElement.textAlign || 'center'}
+                      onChange={(e: any) => handleUpdateElement(selectedElement.id, { textAlign: e.target.value })}
+                      className="w-full px-1.5 py-1 bg-white border border-gray-300 rounded-lg text-xs"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              <p className="text-xs text-center text-gray-400 py-3 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                Click on any textbox in the live certificate preview on the right to select and edit its coordinates and styling.
+              </p>
+            )}
+
+            {/* List of active elements */}
+            <div className="space-y-1 pt-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                Placed Elements (Click to edit):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {(activeConfig.customElements || []).map(el => (
+                  <button
+                    key={el.id}
+                    type="button"
+                    onClick={() => setSelectedElementId(el.id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
+                      selectedElementId === el.id
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
+                    }`}
+                  >
+                    {el.label || el.type} ({el.x}%, {el.y}%)
+                  </button>
+                ))}
+              </div>
             </div>
 
           </div>
 
         </div>
 
-        {/* RIGHT COLUMN: Live Real-Time Certificate Preview (7 columns) */}
+        {/* Right Column: Interactive Certificate Canvas Preview (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
           <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
             <span className="text-xs font-bold text-gray-800 flex items-center">
               <Eye className="w-4 h-4 text-emerald-600 mr-1.5" />
-              Live Real-Time Certificate Preview (A4 Aspect Ratio)
+              Live Interactive Certificate Canvas (A4 Landscape)
             </span>
             <span className="text-[11px] text-gray-400 font-medium">
-              Dynamic placeholders mapped to sample student
+              Click elements to select and reposition
             </span>
           </div>
 
-          {/* Render Customized Visual Certificate */}
+          {/* Canvas Box */}
           <div 
-            className="w-full bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-200 transition-all aspect-[1.414/1] flex flex-col justify-between p-6 sm:p-10 select-none"
+            className="w-full bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-300 transition-all aspect-[1.414/1] p-4 select-none"
             style={{
-              backgroundImage: activeConfig.type === 'custom_uploaded' && activeConfig.backgroundUrl ? `url(${activeConfig.backgroundUrl})` : undefined,
-              backgroundSize: 'cover',
+              backgroundImage: activeConfig.backgroundUrl ? `url(${activeConfig.backgroundUrl})` : undefined,
+              backgroundSize: '100% 100%',
               backgroundPosition: 'center',
+              backgroundColor: '#FFFFFF',
               boxShadow: '0 10px 40px -10px rgba(0,0,0,0.08), 0 0 1px 1px rgba(0,0,0,0.04)'
             }}
           >
-            {/* Border: standard Google quad border if enabled */}
+            {/* Standard border only if explicitly enabled */}
             {activeConfig.showBorder && activeConfig.type === 'standard_google' && (
               <div className="absolute inset-2 sm:inset-3 rounded-xl pointer-events-none p-[3px] bg-gradient-to-tr from-[#34A853] via-[#FBBC05] via-[#EA4335] to-[#4285F4]">
                 <div className="w-full h-full bg-white/95 rounded-[10px] relative">
@@ -507,134 +734,126 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               </div>
             )}
 
-            {/* Certificate Content Overlays */}
-            <div className="relative z-10 flex flex-col justify-between h-full">
-              
-              {/* Header Top */}
-              <div className="flex items-start justify-between">
-                {activeConfig.showLogo ? (
-                  <div className="flex flex-col">
-                    <div className="flex items-center space-x-1">
-                      <span className="text-2xl sm:text-3xl font-bold text-[#4285F4]">G</span>
-                      <span className="text-2xl sm:text-3xl font-bold text-[#EA4335]">o</span>
-                      <span className="text-2xl sm:text-3xl font-bold text-[#FBBC05]">o</span>
-                      <span className="text-2xl sm:text-3xl font-bold text-[#4285F4]">g</span>
-                      <span className="text-2xl sm:text-3xl font-bold text-[#34A853]">l</span>
-                      <span className="text-2xl sm:text-3xl font-bold text-[#EA4335]">e</span>
-                    </div>
-                    <p className="text-[9px] sm:text-[10px] font-semibold tracking-wider text-gray-500 uppercase mt-0.5">
-                      Student Ambassador Program
-                    </p>
+            {/* If Auto-layout mode is selected */}
+            {activeConfig.elementsMode !== 'manual_placed' && activeConfig.type === 'standard_google' ? (
+              <div className="relative z-10 flex flex-col justify-between h-full p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-1">
+                    <span className="text-2xl font-bold text-[#4285F4]">G</span>
+                    <span className="text-2xl font-bold text-[#EA4335]">o</span>
+                    <span className="text-2xl font-bold text-[#FBBC05]">o</span>
+                    <span className="text-2xl font-bold text-[#4285F4]">g</span>
+                    <span className="text-2xl font-bold text-[#34A853]">l</span>
+                    <span className="text-2xl font-bold text-[#EA4335]">e</span>
                   </div>
-                ) : <div />}
-
-                {activeConfig.showProgramEmblem && (
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-2 border-blue-500 bg-blue-50/70 flex flex-col items-center justify-center text-center p-1 shadow-inner">
-                    <span className="text-[10px] font-bold text-blue-700 tracking-tight leading-none">2026</span>
-                    <span className="text-[7px] font-bold uppercase tracking-widest text-gray-600 mt-0.5">OFFICIAL</span>
-                    <span className="text-[6px] font-medium text-gray-500 uppercase">PROGRAM</span>
+                  <div className="w-10 h-10 rounded-full border border-blue-500 bg-blue-50 flex items-center justify-center text-[9px] font-bold text-blue-700">
+                    2026
                   </div>
-                )}
-              </div>
-
-              {/* Center Body */}
-              <div className="text-center my-3 space-y-1.5 sm:space-y-2">
-                <p className="text-[9px] sm:text-[11px] font-bold tracking-[0.2em] text-blue-600 uppercase">
-                  {activeConfig.subheading}
-                </p>
-
-                <h1 className="text-2xl sm:text-4xl font-serif font-bold text-gray-900 tracking-tight">
-                  {activeConfig.heading}
-                </h1>
-
-                <p className="text-xs sm:text-sm italic text-gray-500 font-sans">
-                  {activeConfig.presentationText}
-                </p>
-
-                {/* Recipient Student Name */}
-                <div className="py-1">
-                  <h2 className="text-2xl sm:text-3xl font-serif font-bold text-blue-700 tracking-tight">
-                    Alex Rivera
-                  </h2>
-                  <div className="w-28 sm:w-36 h-0.5 bg-yellow-400 mx-auto mt-1 rounded-full" />
                 </div>
 
-                {/* Body Text with populated placeholders */}
-                <p className="text-[11px] sm:text-xs text-gray-700 max-w-lg mx-auto leading-relaxed">
-                  {populateCertificatePlaceholders(activeConfig.bodyText, {
-                    student_name: 'Alex Rivera',
-                    initiative_name: 'Google Cloud & AI Innovation Summit 2026',
-                    college_name: 'Stanford University',
-                    semester: 'Semester 6',
-                    participation_date: '2026-11-10',
-                    certificate_id: 'GSAP-2026-CA001-A9F82',
-                    ca_name: 'Priya Sharma'
-                  })}
-                </p>
-              </div>
+                <div className="text-center my-auto space-y-1">
+                  <p className="text-[10px] tracking-widest text-blue-600 font-bold uppercase">{activeConfig.subheading}</p>
+                  <h1 className="text-2xl font-serif font-bold text-gray-900">{activeConfig.heading}</h1>
+                  <p className="text-xs italic text-gray-500">{activeConfig.presentationText}</p>
+                  <h2 className="text-2xl font-serif font-bold text-blue-700">Alex Rivera</h2>
+                  <p className="text-[11px] text-gray-700 max-w-md mx-auto">{populateCertificatePlaceholders(activeConfig.bodyText, sampleValues)}</p>
+                </div>
 
-              {/* Bottom Footer Section */}
-              <div className="grid grid-cols-3 items-end pt-3 border-t border-gray-100">
-                {/* Left Date */}
-                <div className="text-left space-y-0.5">
-                  <span className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider text-gray-400 block">
-                    Participation Date
+                <div className="flex justify-between items-end text-xs">
+                  <div>
+                    <span className="text-[9px] text-gray-400 block uppercase">Participation Date</span>
+                    <span className="font-bold text-gray-800">2026-11-10</span>
+                  </div>
+                  <div className="text-center">
+                    <div className="w-10 h-10 bg-slate-100 border border-slate-300 rounded flex items-center justify-center text-[7px] font-bold">QR</div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] text-gray-400 block uppercase">Authorized Signature</span>
+                    <span className="font-serif italic text-xs">Priya Sharma</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Manually Placed Custom Elements */}
+            {(activeConfig.customElements || []).map(el => {
+              const isSelected = el.id === selectedElementId;
+              let content: React.ReactNode = null;
+
+              if (el.type === 'placeholder') {
+                const val = (sampleValues as any)[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`;
+                content = (
+                  <span
+                    style={{
+                      fontSize: `${el.fontSize || 16}px`,
+                      fontWeight: el.fontWeight || 'normal',
+                      color: el.color || '#202124',
+                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                    }}
+                  >
+                    {val}
                   </span>
-                  <p className="text-xs font-semibold text-gray-800">
-                    2026-11-10
-                  </p>
-                  <div className="w-20 sm:w-24 h-[1px] bg-gray-300" />
-                  <p className="text-[8px] text-gray-500">
-                    {activeConfig.footerNote || 'Official Program Issuance'}
-                  </p>
+                );
+              } else if (el.type === 'text') {
+                content = (
+                  <span
+                    style={{
+                      fontSize: `${el.fontSize || 16}px`,
+                      fontWeight: el.fontWeight || 'normal',
+                      color: el.color || '#202124',
+                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                    }}
+                  >
+                    {el.customText || 'Text Box'}
+                  </span>
+                );
+              } else if (el.type === 'qr') {
+                content = (
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-white border border-slate-300 rounded p-1 flex flex-col items-center justify-center shadow-xs">
+                    <QrCode className="w-7 h-7 text-blue-600" />
+                    <span className="text-[6px] font-mono font-bold text-gray-500">QR VERIFY</span>
+                  </div>
+                );
+              } else if (el.type === 'signature') {
+                content = (
+                  <div className="flex flex-col items-center">
+                    <span className="font-serif italic text-sm text-gray-700">Priya Sharma</span>
+                    <div className="w-20 h-[1px] bg-gray-400 mt-0.5" />
+                    <span className="text-[8px] font-bold text-blue-600 mt-0.5">Campus Ambassador</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={el.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedElementId(el.id);
+                  }}
+                  className={`absolute cursor-pointer transition-transform ${
+                    isSelected ? 'ring-2 ring-blue-500 ring-offset-2 z-30' : 'hover:outline hover:outline-1 hover:outline-blue-400 z-20'
+                  }`}
+                  style={{
+                    left: `${el.x}%`,
+                    top: `${el.y}%`,
+                    transform: el.textAlign === 'center' ? 'translate(-50%, -50%)' : el.textAlign === 'right' ? 'translate(-100%, -50%)' : 'translate(0%, -50%)'
+                  }}
+                >
+                  {content}
+                  {isSelected && (
+                    <span className="absolute -top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[8px] font-bold px-1.5 py-0.2 rounded-full whitespace-nowrap">
+                      {el.label}
+                    </span>
+                  )}
                 </div>
+              );
+            })}
 
-                {/* Center QR & ID */}
-                <div className="flex flex-col items-center text-center">
-                  {activeConfig.showQrCode ? (
-                    <>
-                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-slate-100 border border-slate-300 rounded p-1 flex items-center justify-center">
-                        <div className="w-full h-full bg-slate-800 rounded-xs flex items-center justify-center text-[7px] text-white font-mono font-bold">
-                          QR VERIFY
-                        </div>
-                      </div>
-                      <span className="text-[8px] sm:text-[9px] font-mono font-bold text-blue-600 mt-1">
-                        GSAP-2026-CA001-A9F82
-                      </span>
-                    </>
-                  ) : null}
-                </div>
-
-                {/* Right Signature */}
-                <div className="text-right flex flex-col items-end space-y-0.5">
-                  {activeConfig.showSignature ? (
-                    <>
-                      <span className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider text-gray-400 block">
-                        Authorized Signature
-                      </span>
-                      <div className="h-8 flex items-center justify-end">
-                        <span className="text-xs font-serif italic text-gray-700">
-                          Priya Sharma
-                        </span>
-                      </div>
-                      <div className="w-24 sm:w-28 h-[1px] bg-gray-300" />
-                      <p className="text-xs font-bold text-gray-800">
-                        Priya Sharma
-                      </p>
-                      <p className="text-[8px] text-blue-600 font-semibold">
-                        {activeConfig.signatureTitle} (CA-2026-001)
-                      </p>
-                    </>
-                  ) : null}
-                </div>
-
-              </div>
-
-            </div>
           </div>
 
           <p className="text-[11px] text-gray-400 text-center">
-            Tip: All changes saved here automatically synchronize across the entire platform and Cloud Firestore.
+            Tip: Click on any element above to highlight and edit its coordinates. Click "Save Template" to apply across the entire portal.
           </p>
         </div>
 

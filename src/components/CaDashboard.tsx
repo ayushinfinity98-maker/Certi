@@ -31,7 +31,8 @@ import {
   deleteStudent, 
   importStudentsBatch, 
   issueCertificateForStudent,
-  getEmailLogsForCA
+  getEmailLogsForCA,
+  subscribeToStudentsForCA
 } from '../services/dataService';
 import { StudentModal } from './StudentModal';
 import { CsvImportModal } from './CsvImportModal';
@@ -66,24 +67,27 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
   const [issuingSingleStudent, setIssuingSingleStudent] = useState<Student | null>(null);
 
   const loadData = async () => {
-    setIsLoading(true);
     try {
-      const [stuList, logs] = await Promise.all([
-        getStudentsForCA(ca.uid),
-        getEmailLogsForCA(ca.uid)
-      ]);
-      setStudents(stuList);
+      const logs = await getEmailLogsForCA(ca.uid);
       setEmailLogs(logs);
-      setSelectedStudentIds(new Set());
     } catch (err) {
-      console.error('Failed loading CA data:', err);
-    } finally {
-      setIsLoading(false);
+      console.warn('Failed loading CA email logs:', err);
     }
   };
 
   useEffect(() => {
+    setIsLoading(true);
     loadData();
+
+    // Attach real-time Firestore listener for students
+    const unsubscribe = subscribeToStudentsForCA(ca.uid, (updatedStudents) => {
+      setStudents(updatedStudents);
+      setIsLoading(false);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [ca.uid]);
 
   const handleSaveStudent = async (data: any) => {

@@ -48,18 +48,17 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
     window.print();
   };
 
-  const formattedBody = populateCertificatePlaceholders(
-    template.bodyText || 'for active and exemplary participation in "{{initiative_name}}" organized by the Google Student Ambassador Program 2026 at {{college_name}} ({{semester}}).',
-    {
-      student_name: certificate.studentName,
-      initiative_name: certificate.initiativeName,
-      college_name: certificate.college,
-      semester: certificate.semester,
-      participation_date: certificate.participationDate,
-      certificate_id: certificate.certificateId,
-      ca_name: certificate.caName
-    }
-  );
+  const sampleValues = {
+    student_name: certificate.studentName,
+    initiative_name: certificate.initiativeName,
+    college_name: certificate.college,
+    semester: certificate.semester,
+    participation_date: certificate.participationDate,
+    certificate_id: certificate.certificateId,
+    ca_name: certificate.caName
+  };
+
+  const isManualMode = template.elementsMode === 'manual_placed' || template.type === 'blank_plain';
 
   return (
     <div className="flex flex-col items-center">
@@ -115,163 +114,235 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
       {/* Main Certificate Viewport Container */}
       <div 
         id="printable-certificate"
-        className="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-200 transition-all aspect-[1.414/1] flex flex-col justify-between p-8 sm:p-12 select-none"
+        className="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-200 transition-all aspect-[1.414/1] p-6 sm:p-10 select-none"
         style={{
-          backgroundImage: template.type === 'custom_uploaded' && template.backgroundUrl ? `url(${template.backgroundUrl})` : undefined,
-          backgroundSize: 'cover',
+          backgroundImage: template.backgroundUrl ? `url(${template.backgroundUrl})` : undefined,
+          backgroundSize: '100% 100%',
           backgroundPosition: 'center',
+          backgroundColor: '#FFFFFF',
           boxShadow: '0 10px 40px -10px rgba(0,0,0,0.08), 0 0 1px 1px rgba(0,0,0,0.04)'
         }}
       >
-        {/* Quad Google Multi-Color Border if enabled and standard type */}
-        {template.showBorder && template.type !== 'custom_uploaded' && (
+        {/* Quad Google Multi-Color Border ONLY if enabled in template and standard type */}
+        {template.showBorder && template.type === 'standard_google' && (
           <div className="absolute inset-2 sm:inset-4 rounded-xl pointer-events-none p-[3px] bg-gradient-to-tr from-[#34A853] via-[#FBBC05] via-[#EA4335] to-[#4285F4]">
             <div className="w-full h-full bg-white rounded-[10px] relative">
-              {/* Subtle inner pinstripe */}
               <div className="absolute inset-2 border border-slate-200/80 rounded-lg" />
             </div>
           </div>
         )}
 
-        {/* Certificate Content (Above borders) */}
-        <div className="relative z-10 flex flex-col justify-between h-full">
-          
-          {/* Top Header */}
-          <div className="flex items-start justify-between">
-            {/* Google Logo & Program Subtitle */}
-            {template.showLogo ? (
-              <div className="flex flex-col">
-                <div className="flex items-center space-x-1 select-none">
-                  <span className="text-3xl sm:text-4xl font-bold text-[#4285F4]">G</span>
-                  <span className="text-3xl sm:text-4xl font-bold text-[#EA4335]">o</span>
-                  <span className="text-3xl sm:text-4xl font-bold text-[#FBBC05]">o</span>
-                  <span className="text-3xl sm:text-4xl font-bold text-[#4285F4]">g</span>
-                  <span className="text-3xl sm:text-4xl font-bold text-[#34A853]">l</span>
-                  <span className="text-3xl sm:text-4xl font-bold text-[#EA4335]">e</span>
-                </div>
-                <p className="text-[10px] sm:text-xs font-semibold tracking-wider text-gray-500 uppercase mt-1">
-                  Student Ambassador Program
-                </p>
-              </div>
-            ) : <div />}
-
-            {/* Official 2026 Program Emblem */}
-            {template.showProgramEmblem && (
-              <div className="flex items-center space-x-2">
-                <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-blue-500 bg-blue-50/50 flex flex-col items-center justify-center text-center p-1 shadow-inner">
-                  <span className="text-[11px] font-bold text-blue-700 tracking-tight">2026</span>
-                  <span className="text-[8px] font-bold uppercase tracking-widest text-gray-600">OFFICIAL</span>
-                  <span className="text-[7px] font-medium text-gray-500 uppercase">PROGRAM</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Certificate Central Body */}
-          <div className="text-center my-4 sm:my-6 space-y-2 sm:space-y-3">
-            <p className="text-[10px] sm:text-xs font-bold tracking-[0.25em] text-blue-600 uppercase">
-              {template.subheading || 'Google Student Ambassador Program 2026'}
-            </p>
-
-            <h1 className="text-3xl sm:text-5xl font-serif font-bold text-gray-900 tracking-tight">
-              {template.heading || 'Certificate of Participation'}
-            </h1>
-
-            <p className="text-xs sm:text-sm italic text-gray-500 font-sans">
-              {template.presentationText || 'This certificate is proudly and honorably presented to'}
-            </p>
-
-            {/* Student Name */}
-            <div className="py-2">
-              <h2 className="text-2xl sm:text-4xl font-serif font-bold text-blue-700 tracking-tight">
-                {certificate.studentName}
-              </h2>
-              <div className="w-32 sm:w-48 h-0.5 bg-yellow-400 mx-auto mt-2 rounded-full" />
-            </div>
-
-            {/* Description text with dynamic placeholders */}
-            <p className="text-xs sm:text-sm text-gray-700 max-w-xl mx-auto leading-relaxed">
-              {formattedBody}
-            </p>
-          </div>
-
-          {/* Bottom Footer Section: Date, QR Code, Signature */}
-          <div className="grid grid-cols-3 items-end pt-4 border-t border-gray-100 mt-2">
+        {/* If AUTO-LAYOUT MODE is enabled */}
+        {!isManualMode ? (
+          <div className="relative z-10 flex flex-col justify-between h-full">
             
-            {/* Left: Date */}
-            <div className="text-left space-y-1">
-              <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
-                Participation Date
-              </span>
-              <p className="text-xs sm:text-sm font-semibold text-gray-800">
-                {certificate.participationDate}
-              </p>
-              <div className="w-24 sm:w-32 h-[1px] bg-gray-300 mt-1" />
-              <p className="text-[8px] sm:text-[9px] text-gray-500">
-                {template.footerNote || 'Official Program Issuance'}
-              </p>
-            </div>
+            {/* Top Header */}
+            <div className="flex items-start justify-between">
+              {template.showLogo ? (
+                <div className="flex flex-col">
+                  <div className="flex items-center space-x-1 select-none">
+                    <span className="text-3xl sm:text-4xl font-bold text-[#4285F4]">G</span>
+                    <span className="text-3xl sm:text-4xl font-bold text-[#EA4335]">o</span>
+                    <span className="text-3xl sm:text-4xl font-bold text-[#FBBC05]">o</span>
+                    <span className="text-3xl sm:text-4xl font-bold text-[#4285F4]">g</span>
+                    <span className="text-3xl sm:text-4xl font-bold text-[#34A853]">l</span>
+                    <span className="text-3xl sm:text-4xl font-bold text-[#EA4335]">e</span>
+                  </div>
+                  <p className="text-[10px] sm:text-xs font-semibold tracking-wider text-gray-500 uppercase mt-1">
+                    Student Ambassador Program
+                  </p>
+                </div>
+              ) : <div />}
 
-            {/* Center: QR Code & Verification ID */}
-            <div className="flex flex-col items-center text-center">
-              {template.showQrCode && (
-                <>
-                  {qrCodeUrl ? (
-                    <img
-                      src={qrCodeUrl}
-                      alt="QR Verification"
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded bg-white p-0.5 border border-gray-200 shadow-sm"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 animate-pulse rounded" />
-                  )}
-                  <span className="text-[8px] sm:text-[10px] font-mono font-bold text-blue-600 mt-1">
-                    {certificate.certificateId}
-                  </span>
-                  <span className="text-[7px] sm:text-[8px] text-gray-400 uppercase tracking-wider">
-                    Scan to verify
-                  </span>
-                </>
+              {template.showProgramEmblem && (
+                <div className="flex items-center space-x-2">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-blue-500 bg-blue-50/50 flex flex-col items-center justify-center text-center p-1 shadow-inner">
+                    <span className="text-[11px] font-bold text-blue-700 tracking-tight">2026</span>
+                    <span className="text-[8px] font-bold uppercase tracking-widest text-gray-600">OFFICIAL</span>
+                    <span className="text-[7px] font-medium text-gray-500 uppercase">PROGRAM</span>
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Right: CA Authorized Signature */}
-            <div className="text-right flex flex-col items-end space-y-1">
-              {template.showSignature && (
-                <>
-                  <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
-                    Authorized Signature
+            {/* Central Body */}
+            <div className="text-center my-4 sm:my-6 space-y-2 sm:space-y-3">
+              <p className="text-[10px] sm:text-xs font-bold tracking-[0.25em] text-blue-600 uppercase">
+                {template.subheading || 'Google Student Ambassador Program 2026'}
+              </p>
+
+              <h1 className="text-3xl sm:text-5xl font-serif font-bold text-gray-900 tracking-tight">
+                {template.heading || 'Certificate of Participation'}
+              </h1>
+
+              <p className="text-xs sm:text-sm italic text-gray-500 font-sans">
+                {template.presentationText || 'This certificate is proudly and honorably presented to'}
+              </p>
+
+              <div className="py-2">
+                <h2 className="text-2xl sm:text-4xl font-serif font-bold text-blue-700 tracking-tight">
+                  {certificate.studentName}
+                </h2>
+                <div className="w-32 sm:w-48 h-0.5 bg-yellow-400 mx-auto mt-2 rounded-full" />
+              </div>
+
+              <p className="text-xs sm:text-sm text-gray-700 max-w-xl mx-auto leading-relaxed">
+                {populateCertificatePlaceholders(template.bodyText || '', sampleValues)}
+              </p>
+            </div>
+
+            {/* Bottom Footer Section */}
+            <div className="grid grid-cols-3 items-end pt-4 border-t border-gray-100 mt-2">
+              <div className="text-left space-y-1">
+                <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
+                  Participation Date
+                </span>
+                <p className="text-xs sm:text-sm font-semibold text-gray-800">
+                  {certificate.participationDate}
+                </p>
+                <div className="w-24 sm:w-32 h-[1px] bg-gray-300 mt-1" />
+                <p className="text-[8px] sm:text-[9px] text-gray-500">
+                  {template.footerNote || 'Official Program Issuance'}
+                </p>
+              </div>
+
+              <div className="flex flex-col items-center text-center">
+                {template.showQrCode && (
+                  <>
+                    {qrCodeUrl ? (
+                      <img
+                        src={qrCodeUrl}
+                        alt="QR Verification"
+                        className="w-16 h-16 sm:w-20 sm:h-20 rounded bg-white p-0.5 border border-gray-200 shadow-sm"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 animate-pulse rounded" />
+                    )}
+                    <span className="text-[8px] sm:text-[10px] font-mono font-bold text-blue-600 mt-1">
+                      {certificate.certificateId}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="text-right flex flex-col items-end space-y-1">
+                {template.showSignature && (
+                  <>
+                    <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
+                      Authorized Signature
+                    </span>
+                    <div className="h-10 sm:h-12 flex items-center justify-end">
+                      {certificate.signatureUrl ? (
+                        <img
+                          src={certificate.signatureUrl}
+                          alt="Authorized Signature"
+                          className="max-h-10 sm:max-h-12 object-contain"
+                        />
+                      ) : (
+                        <span className="text-xs font-serif italic text-gray-400">
+                          {certificate.caName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="w-28 sm:w-40 h-[1px] bg-gray-300" />
+                    <p className="text-xs sm:text-sm font-bold text-gray-800">
+                      {certificate.caName}
+                    </p>
+                    <p className="text-[8px] sm:text-[10px] font-semibold text-blue-600">
+                      {template.signatureTitle || 'Campus Ambassador'} ({certificate.caId})
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+
+          </div>
+        ) : (
+          /* MANUAL PLACED ELEMENTS ONLY - Pure clean design with exact coordinates */
+          <div className="relative z-10 w-full h-full">
+            {(template.customElements || []).map(el => {
+              let content: React.ReactNode = null;
+
+              if (el.type === 'placeholder') {
+                const val = (sampleValues as any)[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`;
+                content = (
+                  <span
+                    style={{
+                      fontSize: `${el.fontSize || 16}px`,
+                      fontWeight: el.fontWeight || 'normal',
+                      color: el.color || '#202124',
+                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                    }}
+                  >
+                    {val}
                   </span>
-                  
-                  <div className="h-10 sm:h-12 flex items-center justify-end">
+                );
+              } else if (el.type === 'text') {
+                content = (
+                  <span
+                    style={{
+                      fontSize: `${el.fontSize || 16}px`,
+                      fontWeight: el.fontWeight || 'normal',
+                      color: el.color || '#202124',
+                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                    }}
+                  >
+                    {el.customText || ''}
+                  </span>
+                );
+              } else if (el.type === 'qr') {
+                content = (
+                  <div className="flex flex-col items-center">
+                    {qrCodeUrl ? (
+                      <img
+                        src={qrCodeUrl}
+                        alt="QR Code"
+                        className="w-14 h-14 sm:w-16 sm:h-16 rounded bg-white p-0.5 border border-gray-200 shadow-xs"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 bg-gray-100 rounded" />
+                    )}
+                    <span className="text-[8px] font-mono font-bold text-blue-600 mt-0.5">
+                      {certificate.certificateId}
+                    </span>
+                  </div>
+                );
+              } else if (el.type === 'signature') {
+                content = (
+                  <div className="flex flex-col items-center">
                     {certificate.signatureUrl ? (
                       <img
                         src={certificate.signatureUrl}
-                        alt="Authorized Signature"
-                        className="max-h-10 sm:max-h-12 object-contain"
+                        alt="Signature"
+                        className="max-h-10 object-contain"
                       />
                     ) : (
-                      <span className="text-xs font-serif italic text-gray-400">
-                        {certificate.caName}
-                      </span>
+                      <span className="font-serif italic text-xs text-gray-700">{certificate.caName}</span>
                     )}
+                    <div className="w-24 h-[1px] bg-gray-400 mt-1" />
+                    <span className="text-[9px] font-bold text-gray-800 mt-0.5">{certificate.caName}</span>
+                    <span className="text-[8px] text-blue-600 font-semibold">{template.signatureTitle || 'Campus Ambassador'}</span>
                   </div>
+                );
+              }
 
-                  <div className="w-28 sm:w-40 h-[1px] bg-gray-300" />
-                  
-                  <p className="text-xs sm:text-sm font-bold text-gray-800">
-                    {certificate.caName}
-                  </p>
-                  <p className="text-[8px] sm:text-[10px] font-semibold text-blue-600">
-                    {template.signatureTitle || 'Campus Ambassador'} ({certificate.caId})
-                  </p>
-                </>
-              )}
-            </div>
-
+              return (
+                <div
+                  key={el.id}
+                  className="absolute"
+                  style={{
+                    left: `${el.x}%`,
+                    top: `${el.y}%`,
+                    transform: el.textAlign === 'center' ? 'translate(-50%, -50%)' : el.textAlign === 'right' ? 'translate(-100%, -50%)' : 'translate(0%, -50%)'
+                  }}
+                >
+                  {content}
+                </div>
+              );
+            })}
           </div>
+        )}
 
-        </div>
       </div>
     </div>
   );

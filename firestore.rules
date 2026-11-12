@@ -63,11 +63,13 @@ service cloud.firestore {
     }
 
     // Campus Ambassadors collection
-    match /campusAmbassadors/{caUid} {
-      allow get: if true;
-      allow list: if isAdmin();
-      allow write: if isAdmin();
-    }
+  match /campusAmbassadors/{caUid} {
+  allow get: if isAdmin() || (isSignedIn() &&
+    resource.data.googleEmail == request.auth.token.email.lower());
+  allow list: if isAdmin() || (isSignedIn() &&
+    resource.data.googleEmail == request.auth.token.email.lower());
+  allow write: if isAdmin();
+}
 
     // Admins collection
     match /admins/{adminUid} {

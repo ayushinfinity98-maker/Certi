@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, testFirestoreConnection } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
-import { getAllCampusAmbassadors } from '../services/dataService';
+import { getAllCampusAmbassadors, getCampusAmbassadorByGoogleEmail } from '../services/dataService';
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'ayushinfinity98@gmail.com';
 const SESSION_STORAGE_KEY = 'gsap_active_auth_session_v2';
@@ -78,12 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // 2. CAMPUS AMBASSADOR CHECK (ALL CAs FROM FIRESTORE + CACHE)
-      const allCAs = await getAllCampusAmbassadors();
-      const matchedCA = allCAs.find(c => 
-        c.email?.toLowerCase().trim() === emailLower ||
-        (c.googleEmail && c.googleEmail.toLowerCase().trim() === emailLower) ||
-        c.uid === user.uid
-      );
+      const matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
 
       if (matchedCA) {
         if (matchedCA.status === 'suspended') {
@@ -198,11 +193,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Check Campus Ambassadors by Google Email or Primary Email
-      const allCAs = await getAllCampusAmbassadors();
-      const matchedCA = allCAs.find(c => 
-        c.email?.toLowerCase().trim() === googleEmail ||
-        (c.googleEmail && c.googleEmail.toLowerCase().trim() === googleEmail)
-      );
+      const matchedCA = await getCampusAmbassadorByGoogleEmail(googleEmail);
 
       if (matchedCA) {
         if (matchedCA.allowGoogleLogin === false) {

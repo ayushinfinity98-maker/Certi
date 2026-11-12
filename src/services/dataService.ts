@@ -16,14 +16,14 @@ import { Student, Certificate, CampusAmbassador, EmailLog, AuditLog } from '../t
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { dispatchCertificateEmail } from './emailService';
 import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
-
+ 
 // Storage cache keys for absolute persistence ("sara data save rhe")
 const KEY_STUDENTS = 'gsap_students_persistent_cache_v2';
 const KEY_CAS = 'gsap_cas_persistent_cache_v2';
 const KEY_CERTS = 'gsap_certs_persistent_cache_v2';
 const KEY_AUDIT = 'gsap_audit_logs_persistent_cache_v2';
 const KEY_EMAIL_LOGS = 'gsap_email_logs_persistent_cache_v2';
-
+ 
 function loadCache<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
@@ -38,7 +38,7 @@ function loadCache<T>(key: string, fallback: T): T {
   }
   return fallback;
 }
-
+ 
 function saveCache<T>(key: string, data: T): void {
   if (typeof window === 'undefined') return;
   try {
@@ -47,7 +47,7 @@ function saveCache<T>(key: string, data: T): void {
     console.warn(`Cache write error for ${key}:`, e);
   }
 }
-
+ 
 // Default Seed Data for 100% Reliability
 const INITIAL_CAS: CampusAmbassador[] = [
   {
@@ -99,7 +99,7 @@ const INITIAL_CAS: CampusAmbassador[] = [
     updatedAt: new Date().toISOString()
   }
 ];
-
+ 
 const INITIAL_STUDENTS: Student[] = [
   {
     id: 'stu_demo_101',
@@ -161,7 +161,7 @@ const INITIAL_STUDENTS: Student[] = [
     updatedAt: new Date().toISOString()
   }
 ];
-
+ 
 const INITIAL_CERTS: Certificate[] = [
   {
     certificateId: 'GSAP-2026-CA001-ELN72',
@@ -215,7 +215,7 @@ const INITIAL_CERTS: Certificate[] = [
     issuedAt: new Date().toISOString()
   }
 ];
-
+ 
 /**
  * Log system audit event (immutable security requirement)
  */
@@ -238,25 +238,25 @@ export async function logAuditEvent(
     targetId: targetId || '',
     timestamp: new Date().toISOString()
   };
-
+ 
   // Immediate local cache save
   const cached = loadCache<AuditLog[]>(KEY_AUDIT, []);
   saveCache(KEY_AUDIT, [newLog, ...cached.slice(0, 500)]);
-
+ 
   try {
     await setDoc(doc(db, 'auditLogs', logId), newLog);
   } catch (error) {
     console.warn('Could not record audit log to firestore:', error);
   }
 }
-
+ 
 /**
  * CA Student Management
  */
 export async function getStudentsForCA(caUid: string): Promise<Student[]> {
   const cached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   let caStudents = cached.filter(s => s.caUid === caUid);
-
+ 
   try {
     const q = query(collection(db, 'students'), where('caUid', '==', caUid));
     const snap = await getDocs(q);
@@ -273,10 +273,10 @@ export async function getStudentsForCA(caUid: string): Promise<Student[]> {
   } catch (error) {
     console.warn('Firestore getStudentsForCA fallback to cache:', error);
   }
-
+ 
   return caStudents;
 }
-
+ 
 export async function addStudent(
   studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt' | 'certificateStatus'>,
   caUid: string,
@@ -287,14 +287,14 @@ export async function addStudent(
     s => s.email.toLowerCase().trim() === studentData.email.toLowerCase().trim() &&
          s.initiativeName.toLowerCase().trim() === studentData.initiativeName.toLowerCase().trim()
   );
-
+ 
   if (duplicate) {
     throw new Error(`Student with email "${studentData.email}" is already registered for "${studentData.initiativeName}".`);
   }
-
+ 
   const studentId = `stu_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
-
+ 
   const newStudent: Student = {
     ...studentData,
     email: studentData.email.toLowerCase().trim(),
@@ -304,27 +304,27 @@ export async function addStudent(
     createdAt: now,
     updatedAt: now
   };
-
+ 
   // Immediate save to cache
   const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   saveCache(KEY_STUDENTS, [newStudent, ...cachedAll]);
-
+ 
   try {
     await setDoc(doc(db, 'students', studentId), newStudent);
   } catch (error) {
     console.warn('Firestore addStudent offline fallback:', error);
   }
-
+ 
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_ADDED', `Added student ${newStudent.fullName} (${newStudent.email})`, studentId);
   return newStudent;
 }
-
+ 
 export async function updateStudent(studentId: string, updates: Partial<Student>, caUid: string, caEmail: string): Promise<void> {
   const now = new Date().toISOString();
   const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   const updatedAll = cachedAll.map(s => (s.id === studentId ? { ...s, ...updates, updatedAt: now } : s));
   saveCache(KEY_STUDENTS, updatedAll);
-
+ 
   try {
     const ref = doc(db, 'students', studentId);
     await updateDoc(ref, {
@@ -334,24 +334,24 @@ export async function updateStudent(studentId: string, updates: Partial<Student>
   } catch (error) {
     console.warn('Firestore updateStudent offline fallback:', error);
   }
-
+ 
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_UPDATED', `Updated student ${studentId}`, studentId);
 }
-
+ 
 export async function deleteStudent(studentId: string, caUid: string, caEmail: string): Promise<void> {
   const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   saveCache(KEY_STUDENTS, cachedAll.filter(s => s.id !== studentId));
-
+ 
   try {
     const ref = doc(db, 'students', studentId);
     await deleteDoc(ref);
   } catch (error) {
     console.warn('Firestore deleteStudent offline fallback:', error);
   }
-
+ 
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_DELETED', `Deleted student record ${studentId}`, studentId);
 }
-
+ 
 /**
  * Bulk CSV Student Import
  */
@@ -363,17 +363,17 @@ export async function importStudentsBatch(
   let added = 0;
   let skipped = 0;
   const errors: string[] = [];
-
+ 
   const currentStudents = await getStudentsForCA(caUid);
   const existingSet = new Set(currentStudents.map(s => `${s.email.toLowerCase()}_${s.initiativeName.toLowerCase()}`));
-
+ 
   for (const s of studentsList) {
     const key = `${s.email.toLowerCase().trim()}_${s.initiativeName.toLowerCase().trim()}`;
     if (existingSet.has(key)) {
       skipped++;
       continue;
     }
-
+ 
     try {
       await addStudent(s, caUid, caEmail);
       existingSet.add(key);
@@ -382,10 +382,10 @@ export async function importStudentsBatch(
       errors.push(`${s.fullName} (${s.email}): ${err.message}`);
     }
   }
-
+ 
   return { added, skipped, errors };
 }
-
+ 
 /**
  * Certificate Issuance
  */
@@ -403,15 +403,15 @@ export async function issueCertificateForStudent(
       return { certificate: found, emailResult };
     }
   }
-
+ 
   const cleanCaId = (ca.caId || 'CA001').replace(/[^A-Za-z0-9]/g, '');
   const certRandom = Math.random().toString(36).substring(2, 7).toUpperCase();
   const certificateId = `GSAP-2026-${cleanCaId}-${certRandom}`;
-
+ 
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://google-student-ambassador-2026.web.app';
   const verificationUrl = `${origin}/verify/${certificateId}`;
   const now = new Date().toISOString();
-
+ 
   const newCertificate: Certificate = {
     certificateId,
     studentId: student.id,
@@ -429,18 +429,18 @@ export async function issueCertificateForStudent(
     verificationUrl,
     issuedAt: now
   };
-
+ 
   // 1. Immediately cache Certificate
   const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
   saveCache(KEY_CERTS, [newCertificate, ...cachedCerts]);
-
+ 
   // 2. Update Student status in cache
   const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   saveCache(
     KEY_STUDENTS,
     cachedStudents.map(s => s.id === student.id ? { ...s, certificateStatus: 'issued' as const, certificateId, updatedAt: now } : s)
   );
-
+ 
   // 3. Update in Firestore
   try {
     await setDoc(doc(db, 'certificates', certificateId), newCertificate);
@@ -452,10 +452,10 @@ export async function issueCertificateForStudent(
   } catch (err) {
     console.warn('Firestore cert issuance notice:', err);
   }
-
+ 
   // 4. Automated Email Dispatch
   const emailResult = await dispatchCertificateEmail(newCertificate, student);
-
+ 
   // 5. Audit Log
   await logAuditEvent(
     ca.uid,
@@ -465,17 +465,17 @@ export async function issueCertificateForStudent(
     `Issued certificate ${certificateId} to ${student.fullName} (${student.email})`,
     certificateId
   );
-
+ 
   return { certificate: newCertificate, emailResult };
 }
-
+ 
 /**
  * Public Certificate Verification
  */
 export async function getCertificateForVerification(certificateId: string): Promise<Certificate | null> {
   const cached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
   const foundInCache = cached.find(c => c.certificateId.trim().toUpperCase() === certificateId.trim().toUpperCase());
-
+ 
   try {
     const certRef = doc(db, 'certificates', certificateId);
     const snap = await getDoc(certRef);
@@ -490,16 +490,16 @@ export async function getCertificateForVerification(certificateId: string): Prom
   } catch (error) {
     console.warn('Error fetching verification cert from db, checking cache:', error);
   }
-
+ 
   return foundInCache || null;
 }
-
+ 
 /**
  * Super Admin Management: Campus Ambassadors
  */
 export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-
+ 
   try {
     const q = query(collection(db, 'campusAmbassadors'));
     const snap = await getDocs(q);
@@ -515,10 +515,40 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   } catch (error) {
     console.warn('Firestore getAllCampusAmbassadors fallback to cache:', error);
   }
-
+ 
   return cached;
 }
-
+ 
+/**
+ * Login-time lookup: finds ONLY the CA whose Google email matches.
+ * Uses a where() query so Firestore rules can allow it for a signed-in CA
+ * without exposing the whole collection.
+ */
+export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
+  const emailLower = email.toLowerCase().trim();
+ 
+  try {
+    const q = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const d = snap.docs[0];
+      return { ...d.data(), uid: d.id } as CampusAmbassador;
+    }
+  } catch (error) {
+    console.warn('Firestore getCampusAmbassadorByGoogleEmail notice:', error);
+  }
+ 
+  // Fallback: local cache (only helps on the device where the CA was created)
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  return (
+    cached.find(
+      c =>
+        c.email?.toLowerCase().trim() === emailLower ||
+        (c.googleEmail && c.googleEmail.toLowerCase().trim() === emailLower)
+    ) || null
+  );
+}
+ 
 export async function createCampusAmbassadorAccount(
   caData: Omit<CampusAmbassador, 'createdAt' | 'updatedAt' | 'totalStudents' | 'totalCertificates'>,
   adminUid: string,
@@ -526,14 +556,14 @@ export async function createCampusAmbassadorAccount(
 ): Promise<CampusAmbassador> {
   const uid = caData.uid || `ca_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
-
+ 
   const defaultPermissions = caData.permissions || {
     canIssueCertificates: true,
     canImportCsv: true,
     canEditStudents: true,
     canSendEmails: true
   };
-
+ 
   const newCA: CampusAmbassador = {
     ...caData,
     uid,
@@ -546,17 +576,17 @@ export async function createCampusAmbassadorAccount(
     createdAt: now,
     updatedAt: now
   };
-
+ 
   // Immediate cache save
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
   saveCache(KEY_CAS, [newCA, ...cached]);
-
+ 
   try {
     await setDoc(doc(db, 'campusAmbassadors', uid), newCA);
   } catch (error) {
     console.warn('Firestore createCampusAmbassadorAccount notice:', error);
   }
-
+ 
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -567,7 +597,7 @@ export async function createCampusAmbassadorAccount(
   );
   return newCA;
 }
-
+ 
 export async function updateCampusAmbassador(
   caUid: string,
   updates: Partial<CampusAmbassador>,
@@ -580,7 +610,7 @@ export async function updateCampusAmbassador(
     KEY_CAS,
     cached.map(c => c.uid === caUid ? { ...c, ...updates, updatedAt: now } : c)
   );
-
+ 
   try {
     const ref = doc(db, 'campusAmbassadors', caUid);
     await updateDoc(ref, {
@@ -590,7 +620,7 @@ export async function updateCampusAmbassador(
   } catch (error) {
     console.warn('Firestore updateCampusAmbassador notice:', error);
   }
-
+ 
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -600,7 +630,7 @@ export async function updateCampusAmbassador(
     caUid
   );
 }
-
+ 
 export async function updateCampusAmbassadorSignature(
   caUid: string,
   signatureDataUrl: string,
@@ -613,7 +643,7 @@ export async function updateCampusAmbassadorSignature(
     KEY_CAS,
     cached.map(c => c.uid === caUid ? { ...c, signatureUrl: signatureDataUrl, signatureUpdatedAt: now, updatedAt: now } : c)
   );
-
+ 
   try {
     const ref = doc(db, 'campusAmbassadors', caUid);
     await updateDoc(ref, {
@@ -624,7 +654,7 @@ export async function updateCampusAmbassadorSignature(
   } catch (error) {
     console.warn('Firestore updateCampusAmbassadorSignature notice:', error);
   }
-
+ 
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -634,7 +664,7 @@ export async function updateCampusAmbassadorSignature(
     caUid
   );
 }
-
+ 
 /**
  * Super Admin Metrics & Audit Logs
  */
@@ -643,7 +673,7 @@ export async function getAdminSystemMetrics() {
   const students = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
   const certs = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
   const logs = loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []);
-
+ 
   try {
     const [casSnap, studentsSnap, certsSnap, logsSnap] = await Promise.all([
       getDocs(collection(db, 'campusAmbassadors')),
@@ -651,16 +681,16 @@ export async function getAdminSystemMetrics() {
       getDocs(collection(db, 'certificates')),
       getDocs(collection(db, 'emailLogs'))
     ]);
-
+ 
     const finalCAs = Math.max(cas.length, casSnap.size);
     const finalStudents = Math.max(students.length, studentsSnap.size);
     const finalCerts = Math.max(certs.length, certsSnap.size);
     const activeCAs = cas.filter(c => c.status === 'active').length;
-
+ 
     const emailLogs = logsSnap.empty ? logs : logsSnap.docs.map(d => d.data() as EmailLog);
     const successfulEmails = emailLogs.filter(l => l.status === 'sent' || l.status === 'delivered').length;
     const failedEmails = emailLogs.filter(l => l.status === 'failed').length;
-
+ 
     return {
       totalCAs: finalCAs,
       activeCAs,
@@ -681,10 +711,10 @@ export async function getAdminSystemMetrics() {
     };
   }
 }
-
+ 
 export async function getAuditLogsList(maxCount = 200): Promise<AuditLog[]> {
   const cached = loadCache<AuditLog[]>(KEY_AUDIT, []);
-
+ 
   try {
     const q = query(collection(db, 'auditLogs'), limit(maxCount));
     const snap = await getDocs(q);
@@ -702,10 +732,10 @@ export async function getAuditLogsList(maxCount = 200): Promise<AuditLog[]> {
   } catch (error) {
     console.warn('Error fetching audit logs from firestore:', error);
   }
-
+ 
   return cached.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, maxCount);
 }
-
+ 
 export async function logCAStatusChange(
   caUid: string,
   caName: string,
@@ -722,7 +752,7 @@ export async function logCAStatusChange(
     caUid
   );
 }
-
+ 
 export async function logEmailTemplateChange(
   subject: string,
   adminUid: string,
@@ -737,11 +767,11 @@ export async function logEmailTemplateChange(
     'default_certificate'
   );
 }
-
+ 
 export async function getEmailLogsForCA(caUid: string): Promise<EmailLog[]> {
   const cached = loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []);
   let caLogs = cached.filter(l => l.caUid === caUid);
-
+ 
   try {
     const q = query(collection(db, 'emailLogs'), where('caUid', '==', caUid));
     const snap = await getDocs(q);
@@ -752,6 +782,7 @@ export async function getEmailLogsForCA(caUid: string): Promise<EmailLog[]> {
   } catch (error) {
     console.warn('Error fetching CA email logs from db:', error);
   }
-
+ 
   return caLogs;
 }
+ 

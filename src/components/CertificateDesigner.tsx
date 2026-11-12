@@ -4,6 +4,7 @@ import {
   getAllCertificateTemplates, 
   saveCertificateTemplate, 
   setActiveCertificateTemplate, 
+  deleteCertificateTemplate,
   DEFAULT_TEMPLATES,
   populateCertificatePlaceholders
 } from '../services/certificateTemplateService';
@@ -242,6 +243,18 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     }
   };
 
+  const handleDeleteTemplate = async (templateId: string, templateTitle: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete template "${templateTitle}"? Only Super Admin can perform this action.`)) {
+      return;
+    }
+    try {
+      await deleteCertificateTemplate(templateId, adminUid, adminEmail);
+      await loadTemplates();
+    } catch (err: any) {
+      alert(`Could not delete template: ${err.message}`);
+    }
+  };
+
   // Sample values for real-time live preview
   const sampleValues = {
     student_name: 'Alex Rivera',
@@ -306,31 +319,46 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       )}
 
       {/* Template Selector Library Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center space-x-3 overflow-x-auto">
-        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider shrink-0">
-          Template Library:
-        </span>
-        <div className="flex items-center space-x-2">
-          {templates.map(tpl => (
-            <button
-              key={tpl.id}
-              onClick={() => handleSelectTemplate(tpl)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center space-x-2 shrink-0 border ${
-                selectedTemplateId === tpl.id
-                  ? 'bg-blue-50 text-blue-700 border-blue-300 shadow-2xs'
-                  : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              <Award className={`w-3.5 h-3.5 ${selectedTemplateId === tpl.id ? 'text-blue-600' : 'text-gray-400'}`} />
-              <span>{tpl.title}</span>
-              {tpl.isActive && (
-                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">
-                  Active
-                </span>
-              )}
-            </button>
-          ))}
+      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center space-x-3 overflow-x-auto flex-1">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider shrink-0">
+            Template Library:
+          </span>
+          <div className="flex items-center space-x-2">
+            {templates.map(tpl => (
+              <button
+                key={tpl.id}
+                onClick={() => handleSelectTemplate(tpl)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center space-x-2 shrink-0 border ${
+                  selectedTemplateId === tpl.id
+                    ? 'bg-blue-50 text-blue-700 border-blue-300 shadow-2xs'
+                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                }`}
+              >
+                <Award className={`w-3.5 h-3.5 ${selectedTemplateId === tpl.id ? 'text-blue-600' : 'text-gray-400'}`} />
+                <span>{tpl.title}</span>
+                {tpl.isActive && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                    Active
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Super Admin Delete Option */}
+        {templates.length > 1 && (
+          <button
+            type="button"
+            onClick={() => handleDeleteTemplate(activeConfig.id, activeConfig.title)}
+            className="px-3 py-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border border-red-200 rounded-xl transition flex items-center shrink-0 font-semibold"
+            title="Super Admin: Delete this template"
+          >
+            <Trash2 className="w-3.5 h-3.5 mr-1" />
+            Delete Template
+          </button>
+        )}
       </div>
 
       {/* Editor Grid */}
@@ -683,6 +711,49 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 <PenTool className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span>+ CA Signature</span>
               </button>
+            </div>
+
+            {/* Direct Input for Any Custom User Placeholder Tag */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <span className="text-[11px] font-bold text-gray-700 block">
+                Type Any Custom Placeholder to Add:
+              </span>
+              <div className="flex items-center space-x-1.5">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-mono text-xs">{'{{'}</span>
+                  <input
+                    type="text"
+                    id="designer-custom-tag-input"
+                    placeholder="e.g. roll_no, grade, badge"
+                    className="w-full pl-6 pr-6 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const val = (e.currentTarget.value || '').trim();
+                        if (val) {
+                          const clean = val.replace(/[{}]/g, '').trim();
+                          handleAddManualElement(clean, `{{${clean}}}`, 'placeholder');
+                          e.currentTarget.value = '';
+                        }
+                      }
+                    }}
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-mono text-xs">{'}}'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('designer-custom-tag-input') as HTMLInputElement | null;
+                    if (el && el.value.trim()) {
+                      const clean = el.value.replace(/[{}]/g, '').trim();
+                      handleAddManualElement(clean, `{{${clean}}}`, 'placeholder');
+                      el.value = '';
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shrink-0"
+                >
+                  + Add
+                </button>
+              </div>
             </div>
 
             {/* Selected Element Editor Panel */}

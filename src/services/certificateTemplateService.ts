@@ -105,11 +105,17 @@ export async function getAllCertificateTemplates(): Promise<CertificateTemplateC
     const snap = await getDocs(collection(db, 'certificateTemplates'));
     if (!snap.empty) {
       const fromDb = snap.docs.map(d => ({ ...d.data(), id: d.id } as CertificateTemplateConfig));
-      setCachedTemplates(fromDb);
-      return fromDb;
+      // Merge with cache preserving any newer local updates
+      const cached = getCachedTemplates();
+      const map = new Map<string, CertificateTemplateConfig>();
+      cached.forEach(t => map.set(t.id, t));
+      fromDb.forEach(t => map.set(t.id, t));
+      const merged = Array.from(map.values());
+      setCachedTemplates(merged);
+      return merged;
     }
 
-    // Seed defaults into firestore and cache
+    // Seed initial templates if Firestore is empty
     const initial = getCachedTemplates();
     for (const tpl of initial) {
       try {
@@ -124,6 +130,46 @@ export async function getAllCertificateTemplates(): Promise<CertificateTemplateC
     console.warn('Firestore templates offline, using permanent local storage:', err);
     return getCachedTemplates();
   }
+}
+
+/**
+ * Super Admin explicit delete template function ("delete krne ka super admin ko option aye tb delete ho")
+ */
+export async function deleteCertificateTemplate(
+  templateId: string,
+  adminUid: string,
+  adminEmail: string
+): Promise<void> {
+  const all = await getAllCertificateTemplates();
+  if (all.length <= 1) {
+    throw new Error('At least one certificate template must remain in the system.');
+  }
+
+  const remaining = all.filter(t => t.id !== templateId);
+  // If deleted template was active, activate the first remaining
+  if (!remaining.some(t => t.isActive) && remaining.length > 0) {
+    remaining[0].isActive = true;
+  }
+
+  setCachedTemplates(remaining);
+
+  try {
+    await deleteDoc(doc(db, 'certificateTemplates', templateId));
+    if (remaining.length > 0 && remaining[0].isActive) {
+      await setDoc(doc(db, 'certificateTemplates', remaining[0].id), { isActive: true }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('Firestore delete template notice:', err);
+  }
+
+  await logAuditEvent(
+    adminUid,
+    adminEmail,
+    'admin',
+    'CERTIFICATE_TEMPLATE_DELETED',
+    `Super Admin explicitly deleted certificate template ${templateId}`,
+    templateId
+  );
 }
 
 /**

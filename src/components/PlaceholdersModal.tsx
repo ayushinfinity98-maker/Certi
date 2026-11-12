@@ -226,14 +226,49 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
                   <span>QR Code</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleAddPlaceholder('', 'CA Signature', 'signature')}
-                  className="p-2 bg-white hover:bg-blue-50 border border-gray-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5 shadow-2xs"
-                >
-                  <PenTool className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span>CA Signature</span>
-                </button>
+              </div>
+
+              {/* Add Custom User-Defined Placeholder Tag */}
+              <div className="pt-2 border-t border-slate-200">
+                <span className="text-[11px] font-bold text-gray-700 block mb-1">
+                  Type Custom Placeholder Tag:
+                </span>
+                <div className="flex items-center space-x-1.5">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-mono text-xs">{'{{'}</span>
+                    <input
+                      type="text"
+                      id="custom-placeholder-input"
+                      placeholder="e.g. rank, project_url, roll_no"
+                      className="w-full pl-6 pr-6 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const val = (e.currentTarget.value || '').trim();
+                          if (val) {
+                            const clean = val.replace(/[{}]/g, '').trim();
+                            handleAddPlaceholder(clean, `{{${clean}}}`, 'placeholder');
+                            e.currentTarget.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-mono text-xs">{'}}'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const input = document.getElementById('custom-placeholder-input') as HTMLInputElement | null;
+                      if (input && input.value.trim()) {
+                        const clean = input.value.replace(/[{}]/g, '').trim();
+                        handleAddPlaceholder(clean, `{{${clean}}}`, 'placeholder');
+                        input.value = '';
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shrink-0"
+                  >
+                    + Add
+                  </button>
+                </div>
               </div>
             </div>
 

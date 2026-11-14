@@ -6,7 +6,12 @@ import {
   setActiveCertificateTemplate, 
   deleteCertificateTemplate,
   DEFAULT_TEMPLATES,
-  populateCertificatePlaceholders
+  populateCertificatePlaceholders,
+  resolvePlaceholderValue,
+  isSignaturePlaceholderTag,
+  isQrPlaceholderTag,
+  normalizePlaceholderTag,
+  STANDARD_SLIDE_PLACEHOLDER_PRESETS
 } from '../services/certificateTemplateService';
 import { 
   Award, 
@@ -196,18 +201,29 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   };
 
   const handleAddManualElement = (tag: string, label: string, type: 'placeholder' | 'text' | 'qr' | 'signature') => {
+    const norm = normalizePlaceholderTag(tag);
+    const preset = STANDARD_SLIDE_PLACEHOLDER_PRESETS.find(p => {
+      const pNorm = normalizePlaceholderTag(p.tag);
+      if (pNorm === norm) return true;
+      if (pNorm === 'name' && norm === 'student_name') return true;
+      if (pNorm === 'event' && norm === 'initiative_name') return true;
+      if (pNorm === 'university' && norm === 'college_name') return true;
+      if (pNorm === 'date' && norm === 'participation_date') return true;
+      return false;
+    });
+
     const newEl: CertificateCustomElement = {
       id: `el_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type,
       label,
       placeholderTag: type === 'placeholder' ? tag : undefined,
       customText: type === 'text' ? 'Custom Text Box' : undefined,
-      x: 50,
-      y: 50,
-      fontSize: 16,
-      fontWeight: '600',
-      fontFamily: 'sans',
-      color: '#202124',
+      x: preset ? preset.x : 50,
+      y: preset ? preset.y : 50,
+      fontSize: preset ? preset.fontSize : 16,
+      fontWeight: preset ? preset.fontWeight : '600',
+      fontFamily: preset ? preset.fontFamily : 'sans',
+      color: preset ? preset.color : '#202124',
       textAlign: 'center'
     };
 
@@ -217,6 +233,51 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       customElements: [...(prev.customElements || []), newEl]
     }));
     setSelectedElementId(newEl.id);
+  };
+
+  const handleAddAllStandardPlaceholders = () => {
+    const existing = activeConfig.customElements || [];
+    const existingNorms = new Set(
+      existing
+        .filter(e => e.type === 'placeholder' && e.placeholderTag)
+        .map(e => normalizePlaceholderTag(e.placeholderTag))
+    );
+
+    const toAdd: CertificateCustomElement[] = [];
+    STANDARD_SLIDE_PLACEHOLDER_PRESETS.forEach((preset, idx) => {
+      const pNorm = normalizePlaceholderTag(preset.tag);
+      const aliasPresent =
+        existingNorms.has(pNorm) ||
+        (pNorm === 'name' && existingNorms.has('student_name')) ||
+        (pNorm === 'event' && existingNorms.has('initiative_name')) ||
+        (pNorm === 'university' && existingNorms.has('college_name')) ||
+        (pNorm === 'date' && existingNorms.has('participation_date'));
+
+      if (!aliasPresent) {
+        toAdd.push({
+          id: `el_std_${Date.now()}_${idx}`,
+          type: 'placeholder',
+          label: preset.label,
+          placeholderTag: preset.tag,
+          x: preset.x,
+          y: preset.y,
+          fontSize: preset.fontSize,
+          fontWeight: preset.fontWeight,
+          fontFamily: preset.fontFamily,
+          color: preset.color,
+          textAlign: 'center'
+        });
+      }
+    });
+
+    if (toAdd.length === 0) return;
+
+    setActiveConfig(prev => ({
+      ...prev,
+      elementsMode: 'manual_placed',
+      customElements: [...(prev.customElements || []), ...toAdd]
+    }));
+    setSelectedElementId(toAdd[0].id);
   };
 
   const handleUpdateElement = (id: string, updates: Partial<CertificateCustomElement>) => {
@@ -578,7 +639,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               </div>
 
               <p className="text-[11px] text-gray-600 leading-relaxed">
-                Paste your Google Slides URL containing <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{student_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{initiative_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{qr_code}}'}</code>, or <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{ca_signature}}'}</code>. Copies placeholders, font family, font colors, and slide background.
+                Paste your Google Slides URL containing <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{event}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{university}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{sign}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{date}}'}</code>, or <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{CA Name}}'}</code>. Copies placeholders, font family, font colors, and slide background.
               </p>
 
               <div>
@@ -650,42 +711,70 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               Click any element below to add it to your certificate canvas, then adjust its position, font size, and color.
             </p>
 
+            {/* 1-Click Standard Slide Placeholders Bundle */}
+            <button
+              type="button"
+              onClick={handleAddAllStandardPlaceholders}
+              className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5"
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span>+ Add All 6 Standard Placeholders (name, event, university, sign, date, CA Name)</span>
+            </button>
+
             {/* Quick Add Buttons */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => handleAddManualElement('student_name', 'Student Name', 'placeholder')}
+                onClick={() => handleAddManualElement('name', '{{name}}', 'placeholder')}
                 className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>+ Student Name</span>
+                <span>+ {'{{name}}'} (Student)</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleAddManualElement('initiative_name', 'Initiative Name', 'placeholder')}
+                onClick={() => handleAddManualElement('event', '{{event}}', 'placeholder')}
                 className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>+ Initiative / Event</span>
+                <span>+ {'{{event}}'} (Initiative)</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleAddManualElement('college_name', 'College Name', 'placeholder')}
+                onClick={() => handleAddManualElement('university', '{{university}}', 'placeholder')}
                 className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>+ College Name</span>
+                <span>+ {'{{university}}'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleAddManualElement('participation_date', 'Participation Date', 'placeholder')}
+                onClick={() => handleAddManualElement('sign', '{{sign}}', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <PenTool className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>+ {'{{sign}}'} (Signature)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('date', '{{date}}', 'placeholder')}
                 className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>+ Participation Date</span>
+                <span>+ {'{{date}}'} (Date)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAddManualElement('CA Name', '{{CA Name}}', 'placeholder')}
+                className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>+ {'{{CA Name}}'}</span>
               </button>
 
               <button
@@ -717,11 +806,11 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
 
               <button
                 type="button"
-                onClick={() => handleAddManualElement('', 'CA Signature', 'signature')}
+                onClick={() => handleAddManualElement('', 'CA Signature Block', 'signature')}
                 className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-bold text-left transition flex items-center space-x-1.5"
               >
                 <PenTool className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span>+ CA Signature</span>
+                <span>+ Signature Block</span>
               </button>
             </div>
 
@@ -810,6 +899,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                       type="range"
                       min="0"
                       max="100"
+                      step="0.1"
                       value={selectedElement.x}
                       onChange={(e) => handleUpdateElement(selectedElement.id, { x: Number(e.target.value) })}
                       className="w-full accent-blue-600"
@@ -825,6 +915,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                       type="range"
                       min="0"
                       max="100"
+                      step="0.1"
                       value={selectedElement.y}
                       onChange={(e) => handleUpdateElement(selectedElement.id, { y: Number(e.target.value) })}
                       className="w-full accent-blue-600"
@@ -1028,8 +1119,22 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 : 'sans-serif';
               let content: React.ReactNode = null;
 
-              if (el.type === 'placeholder') {
-                const val = (sampleValues as any)[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`;
+              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag)) {
+                content = (
+                  <div className="flex flex-col items-center px-2 py-0.5 border border-dashed border-amber-300/80 rounded bg-amber-50/40">
+                    <span
+                      className="font-serif italic"
+                      style={{
+                        fontSize: `${el.fontSize || 15}px`,
+                        color: el.color || '#202124'
+                      }}
+                    >
+                      Priya Sharma (Sign)
+                    </span>
+                  </div>
+                );
+              } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag)) {
+                const val = resolvePlaceholderValue(el.placeholderTag, sampleValues) ?? `{{${el.placeholderTag}}}`;
                 content = (
                   <span
                     style={{
@@ -1067,7 +1172,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                     }}
                   />
                 );
-              } else if (el.type === 'qr') {
+              } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag))) {
                 content = (
                   <div className="w-12 h-12 sm:w-14 sm:h-14 bg-white border border-slate-300 rounded p-1 flex flex-col items-center justify-center shadow-xs">
                     <QrCode className="w-7 h-7 text-blue-600" />

@@ -269,25 +269,122 @@ export async function setActiveCertificateTemplate(
   );
 }
 
+export interface CertificatePlaceholderValues {
+  student_name: string;
+  initiative_name: string;
+  college_name: string;
+  semester: string;
+  participation_date: string;
+  certificate_id: string;
+  ca_name: string;
+}
+
+export function normalizePlaceholderTag(tag?: string): string {
+  return (tag || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+export function isSignaturePlaceholderTag(tag?: string): boolean {
+  const norm = normalizePlaceholderTag(tag);
+  return norm === 'sign' || norm === 'signature' || norm === 'ca_sign' || norm === 'ca_signature' || norm === 'e_signature';
+}
+
+export function isQrPlaceholderTag(tag?: string): boolean {
+  const norm = normalizePlaceholderTag(tag);
+  return norm === 'qr' || norm === 'qr_code' || norm === 'qrcode' || norm === 'verification_qr';
+}
+
+export function resolvePlaceholderValue(
+  tag: string | undefined,
+  values: CertificatePlaceholderValues
+): string | undefined {
+  const norm = normalizePlaceholderTag(tag);
+  if (!norm) return undefined;
+
+  switch (norm) {
+    case 'student_name':
+    case 'name':
+    case 'student':
+    case 'full_name':
+    case 'fullname':
+    case 'recipient_name':
+    case 'participant_name':
+      return values.student_name;
+
+    case 'initiative_name':
+    case 'initiative':
+    case 'event':
+    case 'event_name':
+    case 'program_event':
+    case 'workshop':
+    case 'session':
+      return values.initiative_name;
+
+    case 'college_name':
+    case 'college':
+    case 'university':
+    case 'university_name':
+    case 'institution':
+    case 'institute':
+      return values.college_name;
+
+    case 'participation_date':
+    case 'date':
+    case 'issue_date':
+    case 'issued_date':
+    case 'event_date':
+      return values.participation_date;
+
+    case 'ca_name':
+    case 'ambassador_name':
+    case 'ambassador':
+    case 'ca':
+      return values.ca_name;
+
+    case 'certificate_id':
+    case 'cert_id':
+    case 'id':
+    case 'verification_id':
+      return values.certificate_id;
+
+    case 'semester':
+    case 'sem':
+      return values.semester;
+
+    default: {
+      const raw = values as unknown as Record<string, string | undefined>;
+      return raw[tag || ''] ?? raw[norm];
+    }
+  }
+}
+
+export const STANDARD_SLIDE_PLACEHOLDER_PRESETS: Array<{
+  tag: string;
+  label: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  fontWeight: 'normal' | 'bold' | '600';
+  fontFamily: 'serif' | 'sans' | 'mono';
+  color: string;
+}> = [
+  { tag: 'name', label: '{{name}}', x: 50, y: 42.3, fontSize: 24, fontWeight: 'bold', fontFamily: 'serif', color: '#1A73E8' },
+  { tag: 'event', label: '{{event}}', x: 46.8, y: 53.9, fontSize: 15, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
+  { tag: 'university', label: '{{university}}', x: 77.1, y: 60, fontSize: 13, fontWeight: 'normal', fontFamily: 'sans', color: '#3C4043' },
+  { tag: 'sign', label: '{{sign}}', x: 77, y: 83.9, fontSize: 14, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
+  { tag: 'date', label: '{{date}}', x: 22.8, y: 84.2, fontSize: 12, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
+  { tag: 'CA Name', label: '{{CA Name}}', x: 50, y: 84.6, fontSize: 12, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
+];
+
 /**
- * Replaces placeholders in custom text
+ * Replaces placeholders in custom text (including common aliases like {{name}}, {{event}}, {{university}}, {{date}}, {{CA Name}})
  */
 export function populateCertificatePlaceholders(
   templateText: string,
-  values: {
-    student_name: string;
-    initiative_name: string;
-    college_name: string;
-    semester: string;
-    participation_date: string;
-    certificate_id: string;
-    ca_name: string;
-  }
+  values: CertificatePlaceholderValues
 ): string {
-  let result = templateText;
-  Object.entries(values).forEach(([k, v]) => {
-    const reg = new RegExp(`{{${k}}}`, 'g');
-    result = result.replace(reg, v);
+  if (!templateText) return '';
+  return templateText.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, rawTag) => {
+    const resolved = resolvePlaceholderValue(rawTag, values);
+    return resolved !== undefined ? resolved : match;
   });
-  return result;
 }

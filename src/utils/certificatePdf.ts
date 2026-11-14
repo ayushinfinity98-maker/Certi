@@ -1,7 +1,14 @@
 import QRCode from 'qrcode';
 import jsPDF from 'jspdf';
 import { Certificate, CertificateTemplateConfig, CertificateCustomElement } from '../types';
-import { getActiveCertificateTemplate, populateCertificatePlaceholders } from '../services/certificateTemplateService';
+import {
+  getActiveCertificateTemplate,
+  populateCertificatePlaceholders,
+  resolvePlaceholderValue,
+  isSignaturePlaceholderTag,
+  isQrPlaceholderTag,
+  CertificatePlaceholderValues
+} from '../services/certificateTemplateService';
 
 /**
  * Generates a data URL for the verification QR code
@@ -65,7 +72,7 @@ export async function renderCertificateToCanvas(
 
   // If in manual mode with placed custom elements:
   if (isManualMode && tpl?.customElements && tpl.customElements.length > 0) {
-    const values: Record<string, string> = {
+    const values: CertificatePlaceholderValues = {
       student_name: cert.studentName,
       initiative_name: cert.initiativeName,
       college_name: cert.college,
@@ -84,10 +91,31 @@ export async function renderCertificateToCanvas(
       ctx.save();
       ctx.textAlign = el.textAlign || 'center';
 
-      if (el.type === 'placeholder' || el.type === 'text') {
+      const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag);
+      const isQrPlaceholder = el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag);
+
+      if (isSigPlaceholder) {
+        if (cert.signatureUrl) {
+          try {
+            const sigImg = new Image();
+            sigImg.crossOrigin = 'anonymous';
+            sigImg.src = cert.signatureUrl;
+            await new Promise(r => { sigImg.onload = r; sigImg.onerror = r; });
+            const sigW = 260;
+            const sigH = 90;
+            ctx.drawImage(sigImg, elX - (sigW / 2), elY - (sigH / 2), sigW, sigH);
+          } catch (e) {
+            console.warn('Sig placeholder render error:', e);
+          }
+        } else {
+          ctx.font = `italic 600 ${fontSize}px Georgia, serif`;
+          ctx.fillStyle = el.color || '#202124';
+          ctx.fillText(cert.caName, elX, elY);
+        }
+      } else if ((el.type === 'placeholder' && !isQrPlaceholder) || el.type === 'text') {
         const textToDraw = el.type === 'placeholder'
-          ? (values[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`)
-          : populateCertificatePlaceholders(el.customText || '', values as any);
+          ? (resolvePlaceholderValue(el.placeholderTag, values) ?? `{{${el.placeholderTag}}}`)
+          : populateCertificatePlaceholders(el.customText || '', values);
 
         const fontFam = el.customFontName
           ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
@@ -112,7 +140,7 @@ export async function renderCertificateToCanvas(
         } catch (e) {
           console.warn('Slide image render error:', e);
         }
-      } else if (el.type === 'qr') {
+      } else if (el.type === 'qr' || isQrPlaceholder) {
         try {
           const qrImg = new Image();
           qrImg.src = qrDataUrl;

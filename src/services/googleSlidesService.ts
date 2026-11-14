@@ -370,16 +370,17 @@ export async function importFromGoogleSlide(
     const yPct = Math.max(0, Math.min(100, Math.round((anchorYEmu / pageHeightEmu) * 1000) / 10));
 
     // Also inspect shape fill color if it's a decorative colored banner behind no-text or text? (keep clean text color)
-    const exactPlaceholderMatch = trimmedText.match(/^{{\s*([a-zA-Z0-9_]+)\s*}}$/);
-    const anyPlaceholderMatch = trimmedText.match(/{{\s*([a-zA-Z0-9_]+)\s*}}/);
+    const exactPlaceholderMatch = trimmedText.match(/^{{\s*([a-zA-Z0-9_\s-]+)\s*}}$/);
+    const anyPlaceholderMatch = trimmedText.match(/{{\s*([a-zA-Z0-9_\s-]+)\s*}}/);
 
     if (exactPlaceholderMatch) {
-      const tag = exactPlaceholderMatch[1].toLowerCase();
-      if (tag === 'qr_code' || tag === 'qr') {
+      const rawTag = exactPlaceholderMatch[1].trim();
+      const tag = rawTag.toLowerCase().replace(/[\s-]+/g, '_');
+      if (tag === 'qr_code' || tag === 'qr' || tag === 'qrcode') {
         customElements.push({
           id: `el_slide_qr_${idx}_${Date.now()}`,
           type: 'qr',
-          label: '{{qr_code}} (Google Slide)',
+          label: `{{${rawTag}}} (Slide)`,
           x: xPct,
           y: yPct,
           fontSize: mappedFontSize,
@@ -390,7 +391,7 @@ export async function importFromGoogleSlide(
         customElements.push({
           id: `el_slide_sig_${idx}_${Date.now()}`,
           type: 'signature',
-          label: '{{ca_signature}} (Google Slide)',
+          label: `{{${rawTag}}} (Slide)`,
           x: xPct,
           y: yPct,
           fontSize: mappedFontSize,
@@ -404,8 +405,8 @@ export async function importFromGoogleSlide(
         customElements.push({
           id: `el_slide_ph_${idx}_${Date.now()}`,
           type: 'placeholder',
-          placeholderTag: tag,
-          label: `{{${tag}}} (Slide)`,
+          placeholderTag: rawTag,
+          label: `{{${rawTag}}} (Slide)`,
           x: xPct,
           y: yPct,
           fontSize: mappedFontSize,

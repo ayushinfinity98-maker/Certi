@@ -2,7 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Certificate, CertificateTemplateConfig } from '../types';
 import { generateVerificationQr, downloadCertificatePdf } from '../utils/certificatePdf';
 import { Download, Share2, CheckCircle2, ShieldCheck, ExternalLink, Printer } from 'lucide-react';
-import { getActiveCertificateTemplate, populateCertificatePlaceholders, DEFAULT_TEMPLATES } from '../services/certificateTemplateService';
+import {
+  getActiveCertificateTemplate,
+  populateCertificatePlaceholders,
+  resolvePlaceholderValue,
+  isSignaturePlaceholderTag,
+  isQrPlaceholderTag,
+  DEFAULT_TEMPLATES
+} from '../services/certificateTemplateService';
 
 interface CertificateTemplateProps {
   certificate: Certificate;
@@ -271,8 +278,30 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                 ? 'monospace'
                 : 'sans-serif';
 
-              if (el.type === 'placeholder') {
-                const val = (sampleValues as any)[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`;
+              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag)) {
+                content = (
+                  <div className="flex flex-col items-center">
+                    {certificate.signatureUrl ? (
+                      <img
+                        src={certificate.signatureUrl}
+                        alt="Signature"
+                        className="max-h-12 object-contain"
+                      />
+                    ) : (
+                      <span
+                        className="italic font-serif"
+                        style={{
+                          fontSize: `${el.fontSize || 16}px`,
+                          color: el.color || '#202124'
+                        }}
+                      >
+                        {certificate.caName}
+                      </span>
+                    )}
+                  </div>
+                );
+              } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag)) {
+                const val = resolvePlaceholderValue(el.placeholderTag, sampleValues) ?? `{{${el.placeholderTag}}}`;
                 content = (
                   <span
                     style={{
@@ -310,7 +339,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                     }}
                   />
                 );
-              } else if (el.type === 'qr') {
+              } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag))) {
                 content = (
                   <div className="flex flex-col items-center">
                     {qrCodeUrl ? (

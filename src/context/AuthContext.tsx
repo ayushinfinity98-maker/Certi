@@ -18,6 +18,7 @@ import {
   ACTIVE_FIRESTORE_DB_ID,
   auth,
   db,
+  defaultDb,
   testFirestoreConnection
 } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
@@ -483,13 +484,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const dirEntry = await lookupCaDirectoryByCaId(cleanId);
       if (dirEntry) {
         lookupEmail = lookupEmail || dirEntry.email;
-        try {
-          const snap = await getDoc(doc(db, 'campusAmbassadors', dirEntry.uid));
-          if (snap.exists()) {
-            caRecord = { ...snap.data(), uid: snap.id } as CampusAmbassador;
+        for (const targetDb of ACTIVE_FIRESTORE_DB_ID !== '(default)' ? [db, defaultDb] : [db]) {
+          try {
+            const snap = await getDoc(doc(targetDb, 'campusAmbassadors', dirEntry.uid));
+            if (snap.exists()) {
+              caRecord = { ...snap.data(), uid: snap.id } as CampusAmbassador;
+              break;
+            }
+          } catch {
+            // continue
           }
-        } catch {
-          // continue to auth sign-in
         }
       }
 

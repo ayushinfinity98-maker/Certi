@@ -17,7 +17,7 @@ import {
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { ACTIVE_FIRESTORE_DB_ID, auth, db, getSecondaryAuth } from '../firebase/config';
+import { ACTIVE_FIRESTORE_DB_ID, auth, db, defaultDb, getSecondaryAuth } from '../firebase/config';
 import { Student, Certificate, CampusAmbassador, EmailLog, AuditLog } from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { dispatchCertificateEmail } from './emailService';
@@ -26,9 +26,47 @@ import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
 // Storage cache keys for absolute persistence ("sara data save rhe")
 const KEY_STUDENTS = 'gsap_students_persistent_cache_v2';
 const KEY_CAS = 'gsap_cas_persistent_cache_v2';
+const KEY_DELETED_CAS = 'gsap_deleted_cas_v1';
 const KEY_CERTS = 'gsap_certs_persistent_cache_v2';
 const KEY_AUDIT = 'gsap_audit_logs_persistent_cache_v2';
 const KEY_EMAIL_LOGS = 'gsap_email_logs_persistent_cache_v2';
+
+function getDeletedCaUidSet(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(KEY_DELETED_CAS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.filter(v => typeof v === 'string'));
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function markCaUidDeleted(uid: string): void {
+  if (typeof window === 'undefined') return;
+  const set = getDeletedCaUidSet();
+  set.add(uid);
+  try {
+    localStorage.setItem(KEY_DELETED_CAS, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+}
+
+function unmarkCaUidDeleted(uid: string): void {
+  if (typeof window === 'undefined') return;
+  const set = getDeletedCaUidSet();
+  if (set.delete(uid)) {
+    try {
+      localStorage.setItem(KEY_DELETED_CAS, JSON.stringify(Array.from(set)));
+    } catch {
+      // ignore
+    }
+  }
+}
  
 function loadCache<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
@@ -298,8 +336,9 @@ export function subscribeToAllCampusAmbassadors(
   onUpdate: (cas: CampusAmbassador[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  const deletedUids = getDeletedCaUidSet();
   // Emit initial cache immediately
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
   onUpdate(cached);
 
   try {
@@ -307,10 +346,15 @@ export function subscribeToAllCampusAmbassadors(
     return onSnapshot(
       q,
       (snapshot) => {
-        const fromDb = snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
-        const allCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+        const currentDeleted = getDeletedCaUidSet();
+        const fromDb = snapshot.docs
+          .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+          .filter(c => !currentDeleted.has(c.uid));
+        const rawCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(
+          c => !currentDeleted.has(c.uid)
+        );
         const map = new Map<string, CampusAmbassador>();
-        allCached.forEach(c => map.set(c.uid, c));
+        rawCached.forEach(c => map.set(c.uid, c));
         fromDb.forEach(c => map.set(c.uid, c));
         const merged = Array.from(map.values());
         saveCache(KEY_CAS, merged);
@@ -318,7 +362,7 @@ export function subscribeToAllCampusAmbassadors(
 
         // Whenever Super Admin is authenticated in Firebase Auth, keep all CAs & caDirectory synced to cloud
         if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
-          void syncCasToCloud(fromDb, allCached).catch(() => {});
+          void syncCasToCloud(fromDb, rawCached).catch(() => {});
         }
       },
       (error) => {
@@ -667,8 +711,9 @@ async function syncCasToCloud(fromDb: CampusAmbassador[], cached: CampusAmbassad
   }
   lastCloudSyncAt = now;
 
+  const deletedUids = getDeletedCaUidSet();
   const dbUidSet = new Set(fromDb.map(c => c.uid));
-  const localOnlyCas = cached.filter(c => !dbUidSet.has(c.uid));
+  const localOnlyCas = cached.filter(c => !dbUidSet.has(c.uid) && !deletedUids.has(c.uid));
 
   const syncSingle = async (ca: CampusAmbassador, mustWriteDoc: boolean) => {
     const { normalized, changed } = normalizeCaRecord(ca);
@@ -680,7 +725,7 @@ async function syncCasToCloud(fromDb: CampusAmbassador[], cached: CampusAmbassad
   };
 
   await Promise.all([
-    ...fromDb.map(ca => syncSingle(ca, false)),
+    ...fromDb.filter(ca => !deletedUids.has(ca.uid)).map(ca => syncSingle(ca, false)),
     ...localOnlyCas.map(localCa => syncSingle(localCa, true))
   ]);
 
@@ -692,10 +737,32 @@ export async function syncAllCasToCloud(): Promise<{ syncedCount: number }> {
     throw new Error('Please connect your Super Admin Google session (ayushinfinity98@gmail.com) first so Firestore allows cloud sync.');
   }
   lastCloudSyncAt = 0;
+  const deletedUids = getDeletedCaUidSet();
   const snap = await getDocs(collection(db, 'campusAmbassadors'));
-  const fromDb = snap.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-  return await syncCasToCloud(fromDb, cached);
+  const fromDb = snap.docs
+    .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+    .filter(c => !deletedUids.has(c.uid));
+
+  // Also check (default) database in case earlier accounts were saved there
+  let fromDefaultDb: CampusAmbassador[] = [];
+  if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+    try {
+      const defSnap = await getDocs(collection(defaultDb, 'campusAmbassadors'));
+      fromDefaultDb = defSnap.docs
+        .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+        .filter(c => !deletedUids.has(c.uid));
+    } catch {
+      // ignore if (default) doesn't exist or denies
+    }
+  }
+
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
+  const combinedMap = new Map<string, CampusAmbassador>();
+  cached.forEach(c => combinedMap.set(c.uid, c));
+  fromDefaultDb.forEach(c => combinedMap.set(c.uid, c));
+  fromDb.forEach(c => combinedMap.set(c.uid, c));
+
+  return await syncCasToCloud(fromDb, Array.from(combinedMap.values()));
 }
 
 async function provisionCaFirebaseAuth(email: string, password: string): Promise<void> {
@@ -727,21 +794,25 @@ export async function lookupCaDirectoryByCaId(
   if (!trimmed) return null;
 
   const dirKey = sanitizeDirectoryKey(trimmed.includes('@') ? trimmed.toLowerCase() : trimmed.toUpperCase());
+  const dbsToCheck = ACTIVE_FIRESTORE_DB_ID !== '(default)' ? [db, defaultDb] : [db];
 
-  try {
-    const snap = await getDoc(doc(db, 'caDirectory', dirKey));
-    if (snap.exists()) {
-      const data = snap.data() as { uid: string; email: string; googleEmail?: string; caId?: string };
-      if (data?.uid && data?.email) {
-        return data;
+  for (const targetDb of dbsToCheck) {
+    try {
+      const snap = await getDoc(doc(targetDb, 'caDirectory', dirKey));
+      if (snap.exists()) {
+        const data = snap.data() as { uid: string; email: string; googleEmail?: string; caId?: string };
+        if (data?.uid && data?.email) {
+          return data;
+        }
       }
+    } catch (error) {
+      console.warn('Firestore lookupCaDirectoryByCaId notice:', error);
     }
-  } catch (error) {
-    console.warn('Firestore lookupCaDirectoryByCaId notice:', error);
   }
 
   // Fallback to local cache / seed CAs
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const deletedUids = getDeletedCaUidSet();
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
   const lower = trimmed.toLowerCase();
   const upper = trimmed.toUpperCase();
   const match = cached.find(
@@ -766,13 +837,16 @@ export async function lookupCaDirectoryByCaId(
  * Super Admin Management: Campus Ambassadors
  */
 export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const deletedUids = getDeletedCaUidSet();
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
 
   try {
     const q = query(collection(db, 'campusAmbassadors'));
     const snap = await getDocs(q);
     if (!snap.empty) {
-      const fromDb = snap.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
+      const fromDb = snap.docs
+        .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+        .filter(c => !deletedUids.has(c.uid));
       const map = new Map<string, CampusAmbassador>();
       cached.forEach(c => map.set(c.uid, c));
       fromDb.forEach(c => map.set(c.uid, c));
@@ -793,63 +867,86 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   return cached;
 }
 
+async function queryCaInDatabase(
+  targetDb: typeof db,
+  emailLower: string
+): Promise<{ ca: CampusAmbassador | null; error: any }> {
+  let firstError: any = null;
+
+  try {
+    const qGoogle = query(collection(targetDb, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
+    const snapGoogle = await getDocs(qGoogle);
+    if (!snapGoogle.empty) {
+      const d = snapGoogle.docs[0];
+      return { ca: { ...d.data(), uid: d.id } as CampusAmbassador, error: null };
+    }
+  } catch (err: any) {
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (googleEmail) error:', err?.code, err?.message, err);
+    firstError = firstError || err;
+  }
+
+  try {
+    const qEmail = query(collection(targetDb, 'campusAmbassadors'), where('email', '==', emailLower));
+    const snapEmail = await getDocs(qEmail);
+    if (!snapEmail.empty) {
+      const d = snapEmail.docs[0];
+      return { ca: { ...d.data(), uid: d.id } as CampusAmbassador, error: null };
+    }
+  } catch (err: any) {
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (email) error:', err?.code, err?.message, err);
+    firstError = firstError || err;
+  }
+
+  try {
+    const dirKey = sanitizeDirectoryKey(emailLower);
+    const dirSnap = await getDoc(doc(targetDb, 'caDirectory', dirKey));
+    if (dirSnap.exists()) {
+      const dirData = dirSnap.data() as { uid?: string };
+      if (dirData?.uid) {
+        const docSnap = await getDoc(doc(targetDb, 'campusAmbassadors', dirData.uid));
+        if (docSnap.exists()) {
+          return { ca: { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador, error: null };
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (caDirectory) error:', err?.code, err?.message, err);
+    firstError = firstError || err;
+  }
+
+  return { ca: null, error: firstError };
+}
+
 /**
  * Login-time lookup: finds ONLY the CA whose Google email or primary email matches.
- * Uses where() queries + caDirectory fallback so Firestore rules allow it for a signed-in CA
+ * Uses where() queries + caDirectory getDoc fallback so Firestore rules allow it for a signed-in CA
  * without exposing the whole collection.
  */
 export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
   const emailLower = email.toLowerCase().trim();
   if (!emailLower) return null;
 
-  let snapGoogle;
-  try {
-    const qGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
-    snapGoogle = await getDocs(qGoogle);
-  } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (googleEmail) error:', err?.code, err?.message, err);
-    throw err;
+  const primaryRes = await queryCaInDatabase(db, emailLower);
+  if (primaryRes.ca) {
+    return primaryRes.ca;
   }
 
-  if (!snapGoogle.empty) {
-    const d = snapGoogle.docs[0];
-    return { ...d.data(), uid: d.id } as CampusAmbassador;
-  }
-
-  let fallbackErr: any = null;
-
-  try {
-    const qEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', emailLower));
-    const snapEmail = await getDocs(qEmail);
-    if (!snapEmail.empty) {
-      const d = snapEmail.docs[0];
-      return { ...d.data(), uid: d.id } as CampusAmbassador;
+  let fallbackRes: { ca: CampusAmbassador | null; error: any } = { ca: null, error: null };
+  if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+    fallbackRes = await queryCaInDatabase(defaultDb, emailLower);
+    if (fallbackRes.ca) {
+      return fallbackRes.ca;
     }
-  } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (email) error:', err?.code, err?.message, err);
-    fallbackErr = err;
   }
 
-  try {
-    // Fallback via caDirectory exact key lookup
-    const dirEntry = await lookupCaDirectoryByCaId(emailLower);
-    if (dirEntry?.uid) {
-      const docSnap = await getDoc(doc(db, 'campusAmbassadors', dirEntry.uid));
-      if (docSnap.exists()) {
-        return { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador;
-      }
-    }
-  } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (caDirectory) error:', err?.code, err?.message, err);
-    fallbackErr = fallbackErr || err;
-  }
-
-  if (fallbackErr) {
-    throw fallbackErr;
+  const finalError = primaryRes.error || fallbackRes.error;
+  if (finalError) {
+    throw finalError;
   }
 
   // Fallback: local cache (only helps on the device where the CA was created)
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const deletedUids = getDeletedCaUidSet();
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
   const cachedMatch =
     cached.find(
       c =>
@@ -901,9 +998,11 @@ export async function createCampusAmbassadorAccount(
     updatedAt: now
   };
 
+  unmarkCaUidDeleted(uid);
+
   // Immediate cache save
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-  saveCache(KEY_CAS, [newCA, ...cached]);
+  saveCache(KEY_CAS, [newCA, ...cached.filter(c => c.uid !== uid)]);
 
   try {
     await setDoc(doc(db, 'campusAmbassadors', uid), newCA);
@@ -1022,6 +1121,77 @@ export async function updateCampusAmbassadorSignature(
     'CA_SIGNATURE_UPDATED',
     `Updated e-signature image for Campus Ambassador ${caUid}`,
     caUid
+  );
+}
+
+export async function checkCaUsageForDeletion(caUid: string): Promise<{ studentCount: number; certCount: number }> {
+  const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS).filter(s => s.caUid === caUid);
+  const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS).filter(c => c.caUid === caUid);
+
+  let dbStudentCount = 0;
+  let dbCertCount = 0;
+
+  try {
+    const [stuSnap, certSnap] = await Promise.all([
+      getDocs(query(collection(db, 'students'), where('caUid', '==', caUid))),
+      getDocs(query(collection(db, 'certificates'), where('caUid', '==', caUid)))
+    ]);
+    dbStudentCount = stuSnap.size;
+    dbCertCount = certSnap.size;
+  } catch (err) {
+    console.warn('checkCaUsageForDeletion Firestore notice:', err);
+  }
+
+  return {
+    studentCount: Math.max(dbStudentCount, cachedStudents.length),
+    certCount: Math.max(dbCertCount, cachedCerts.length)
+  };
+}
+
+export async function deleteCampusAmbassador(
+  ca: CampusAmbassador,
+  adminUid: string,
+  adminEmail: string
+): Promise<void> {
+  if (!auth.currentUser || auth.currentUser.email?.toLowerCase().trim() !== 'ayushinfinity98@gmail.com') {
+    throw new Error('Please connect your Super Admin Google session (ayushinfinity98@gmail.com) first so Firestore allows deleting CA accounts.');
+  }
+
+  const usage = await checkCaUsageForDeletion(ca.uid);
+  if (usage.studentCount > 0 || usage.certCount > 0) {
+    throw new Error(
+      `Cannot delete ${ca.name} (${ca.caId}): account has ${usage.studentCount} student(s) and ${usage.certCount} certificate(s). Only unused CA accounts can be deleted — use Suspend instead.`
+    );
+  }
+
+  const cleanCaId = ca.caId ? sanitizeDirectoryKey(ca.caId.toUpperCase()) : '';
+  const cleanEmail = ca.email ? sanitizeDirectoryKey(ca.email.toLowerCase()) : '';
+  const cleanGoogleEmail = ca.googleEmail ? sanitizeDirectoryKey(ca.googleEmail.toLowerCase()) : '';
+  const dirKeys = Array.from(new Set([cleanCaId, cleanEmail, cleanGoogleEmail].filter(Boolean)));
+
+  await deleteDoc(doc(db, 'campusAmbassadors', ca.uid));
+  await Promise.all(
+    dirKeys.map(k => deleteDoc(doc(db, 'caDirectory', k)).catch(() => {}))
+  );
+
+  if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+    await deleteDoc(doc(defaultDb, 'campusAmbassadors', ca.uid)).catch(() => {});
+    await Promise.all(
+      dirKeys.map(k => deleteDoc(doc(defaultDb, 'caDirectory', k)).catch(() => {}))
+    );
+  }
+
+  markCaUidDeleted(ca.uid);
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  saveCache(KEY_CAS, cached.filter(c => c.uid !== ca.uid));
+
+  await logAuditEvent(
+    adminUid,
+    adminEmail,
+    'admin',
+    'CA_ACCOUNT_DELETED',
+    `Deleted unused Campus Ambassador account ${ca.name} (${ca.caId}, ${ca.email})`,
+    ca.uid
   );
 }
  

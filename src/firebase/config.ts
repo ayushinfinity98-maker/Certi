@@ -3,11 +3,14 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+export const AI_STUDIO_FIRESTORE_DB_ID = 'ai-studio-99858c10-4c3d-4fe3-bbb2-82d618401bfb';
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const firestoreDatabaseId = (firebaseConfig as Record<string, string | undefined>).firestoreDatabaseId;
+const firestoreDatabaseId =
+  (firebaseConfig as Record<string, string | undefined>).firestoreDatabaseId || AI_STUDIO_FIRESTORE_DB_ID;
 export const ACTIVE_FIREBASE_PROJECT_ID = firebaseConfig.projectId;
-export const ACTIVE_FIRESTORE_DB_ID = firestoreDatabaseId || '(default)';
-export const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+export const ACTIVE_FIRESTORE_DB_ID = firestoreDatabaseId;
+export const db = getFirestore(app, firestoreDatabaseId);
+export const defaultDb = getFirestore(app);
 export const auth = getAuth(app);
 
 export function getSecondaryAuth() {

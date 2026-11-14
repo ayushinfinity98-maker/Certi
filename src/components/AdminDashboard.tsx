@@ -23,7 +23,8 @@ import {
   Copy,
   Check,
   Chrome,
-  Send
+  Send,
+  Trash2
 } from 'lucide-react';
 import { CampusAmbassador, Certificate, EmailLog, AuditLog, Student } from '../types';
 import { 
@@ -37,7 +38,9 @@ import {
   logCAStatusChange,
   subscribeToAllCampusAmbassadors,
   subscribeToCertificates,
-  syncAllCasToCloud
+  syncAllCasToCloud,
+  checkCaUsageForDeletion,
+  deleteCampusAmbassador
 } from '../services/dataService';
 import { CaModal } from './CaModal';
 import { SignatureModal } from './SignatureModal';
@@ -92,6 +95,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const [isDispatchingAll, setIsDispatchingAll] = useState(false);
   const [dispatchNotice, setDispatchNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const [deletingCaState, setDeletingCaState] = useState<{
+    ca: CampusAmbassador;
+    checking: boolean;
+    studentCount: number;
+    certCount: number;
+    error: string | null;
+    isDeleting: boolean;
+  } | null>(null);
 
   const loadData = async () => {
     try {
@@ -165,6 +176,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const handleViewCaStudents = async (ca: CampusAmbassador) => {
     const students = await getStudentsForCA(ca.uid);
     setInspectingCaStudents({ ca, students });
+  };
+
+  const handleOpenDeleteCa = async (ca: CampusAmbassador) => {
+    setDeletingCaState({
+      ca,
+      checking: true,
+      studentCount: 0,
+      certCount: 0,
+      error: null,
+      isDeleting: false
+    });
+    try {
+      const usage = await checkCaUsageForDeletion(ca.uid);
+      setDeletingCaState(prev =>
+        prev && prev.ca.uid === ca.uid
+          ? { ...prev, checking: false, studentCount: usage.studentCount, certCount: usage.certCount }
+          : prev
+      );
+    } catch (err: any) {
+      setDeletingCaState(prev =>
+        prev && prev.ca.uid === ca.uid
+          ? { ...prev, checking: false, error: err?.message || 'Could not verify CA usage.' }
+          : prev
+      );
+    }
+  };
+
+  const handleConfirmDeleteCa = async () => {
+    if (!deletingCaState) return;
+    const targetCa = deletingCaState.ca;
+    setDeletingCaState(prev => (prev ? { ...prev, isDeleting: true, error: null } : null));
+    try {
+      await deleteCampusAmbassador(targetCa, adminUid, adminEmail);
+      setCas(prev => prev.filter(c => c.uid !== targetCa.uid));
+      setDeletingCaState(null);
+      setCloudSyncNotice(`Deleted unused Campus Ambassador account ${targetCa.name} (${targetCa.caId}).`);
+      await loadData();
+    } catch (err: any) {
+      setDeletingCaState(prev =>
+        prev ? { ...prev, isDeleting: false, error: err?.message || 'Failed to delete CA account.' } : null
+      );
+    }
   };
 
   const handleConnectAdminGmail = async () => {
@@ -739,6 +792,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                             >
                               {ca.status === 'active' ? 'Suspend' : 'Activate'}
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteCa(ca)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                              title="Delete unused CA account"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1110,6 +1171,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Unused CA Confirmation Modal */}
+      {deletingCaState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center space-x-2.5">
+              <div className="p-2.5 bg-red-50 text-red-600 rounded-xl border border-red-100">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  Delete Unused CA Account
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {deletingCaState.ca.name} &bull; <span className="font-mono">{deletingCaState.ca.caId}</span>
+                </p>
+              </div>
+            </div>
+
+            {deletingCaState.checking ? (
+              <p className="text-xs text-gray-600 py-2">
+                Checking whether this Campus Ambassador has any registered students or issued certificates...
+              </p>
+            ) : deletingCaState.studentCount > 0 || deletingCaState.certCount > 0 ? (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1.5">
+                <p className="font-bold">This CA account is currently in use</p>
+                <p>
+                  Found <span className="font-bold">{deletingCaState.studentCount}</span> student(s) and{' '}
+                  <span className="font-bold">{deletingCaState.certCount}</span> issued certificate(s). Only unused CA
+                  accounts can be deleted so existing verification links remain intact. You can Suspend this account instead.
+                </p>
+              </div>
+            ) : (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-gray-700 space-y-1">
+                <p>
+                  This CA (<span className="font-mono font-semibold">{deletingCaState.ca.email}</span>) has{' '}
+                  <span className="font-bold text-emerald-700">0 students</span> and{' '}
+                  <span className="font-bold text-emerald-700">0 certificates</span>.
+                </p>
+                <p className="text-gray-500">
+                  Deleting permanently removes the CA profile and revokes Google and password login access.
+                </p>
+              </div>
+            )}
+
+            {!isCloudAuthenticated && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
+                Cloud Admin session is not active. Click "Connect Cloud Admin & Sync CAs" first so Firestore allows deleting this account.
+              </div>
+            )}
+
+            {deletingCaState.error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                {deletingCaState.error}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingCaState(null)}
+                disabled={deletingCaState.isDeleting}
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+
+              {!deletingCaState.checking &&
+                deletingCaState.studentCount === 0 &&
+                deletingCaState.certCount === 0 && (
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteCa}
+                    disabled={deletingCaState.isDeleting || !isCloudAuthenticated}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                  >
+                    {deletingCaState.isDeleting ? 'Deleting...' : 'Delete Unused CA'}
+                  </button>
+                )}
             </div>
           </div>
         </div>

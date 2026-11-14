@@ -210,6 +210,13 @@ export interface FormSubmission {
   formTitle: string;
   caUid: string;
   caId: string;
+  referringCaUid?: string;
+  referringCaId?: string;
+  referringCaName?: string;
+  referringCaCollege?: string;
+  formCreatorUid?: string;
+  formCreatorId?: string;
+  formCreatorName?: string;
   fullName: string;
   email: string;
   college: string;

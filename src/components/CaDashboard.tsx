@@ -45,8 +45,10 @@ import { CertificateTemplate } from './CertificateTemplate';
 import { SendEmailModal } from './SendEmailModal';
 import { MainCaFormBuilder } from './MainCaFormBuilder';
 import { PlaceholderRoleManager } from './PlaceholderRoleManager';
+import { StandardCaSharedForms } from './StandardCaSharedForms';
 import {
   importFormSubmissionToStudent,
+  subscribeToActiveSharedCaForms,
   subscribeToFormsForCA,
   subscribeToFormSubmissionsForCA
 } from '../services/formService';
@@ -61,10 +63,11 @@ interface CaDashboardProps {
 
 export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEmail }) => {
   const [ca, setCa] = useState<CampusAmbassador>(initialCa);
-  const [activeSubTab, setActiveSubTab] = useState<'students' | 'forms' | 'placeholders'>('students');
+  const [activeSubTab, setActiveSubTab] = useState<'students' | 'forms' | 'placeholders' | 'shared_forms'>('students');
   const [students, setStudents] = useState<Student[]>([]);
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [caForms, setCaForms] = useState<CaRegistrationForm[]>([]);
+  const [sharedForms, setSharedForms] = useState<CaRegistrationForm[]>([]);
   const [formSubmissions, setFormSubmissions] = useState<FormSubmission[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
@@ -77,8 +80,10 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
   }, [initialCa]);
 
   useEffect(() => {
-    if (!isMainCa && activeSubTab !== 'students') {
+    if (!isMainCa && activeSubTab !== 'students' && activeSubTab !== 'shared_forms') {
       setActiveSubTab('students');
+    } else if (isMainCa && activeSubTab === 'shared_forms') {
+      setActiveSubTab('forms');
     }
   }, [isMainCa, activeSubTab]);
 
@@ -120,23 +125,27 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
       setIsLoading(false);
     });
 
-    // Attach Main CA forms & submissions listeners so auto-import runs immediately even on Students tab
+    // Attach Main CA forms & shared active forms + submissions listeners
     const unsubForms = subscribeToFormsForCA(initialCa.uid, setCaForms);
+    const unsubSharedForms = subscribeToActiveSharedCaForms(setSharedForms);
     const unsubSubs = subscribeToFormSubmissionsForCA(initialCa.uid, setFormSubmissions);
 
     return () => {
       unsubProfile();
       unsubscribe();
       unsubForms();
+      unsubSharedForms();
       unsubSubs();
     };
   }, [initialCa.uid]);
 
   useEffect(() => {
-    if (!isMainCa || formSubmissions.length === 0) return;
-    const formMap = new Map(caForms.map(f => [f.id, f]));
+    if (formSubmissions.length === 0) return;
+    const allKnownForms = isMainCa ? caForms : sharedForms;
+    const formMap = new Map(allKnownForms.map(f => [f.id, f]));
     const pendingToImport = formSubmissions.filter(sub => {
       if (sub.status !== 'pending') return false;
+      if (sub.caUid !== initialCa.uid) return false;
       if (autoSyncedSubmissionIdsRef.current.has(sub.id)) return false;
       const parentForm = formMap.get(sub.formId);
       return parentForm ? parentForm.autoAddStudent !== false : true;
@@ -151,7 +160,7 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
         console.warn('CaDashboard auto-import submission notice:', err);
       }
     });
-  }, [isMainCa, caForms, formSubmissions, actorEmail]);
+  }, [isMainCa, caForms, sharedForms, formSubmissions, actorEmail, initialCa.uid]);
 
   const handleSaveStudent = async (data: any) => {
     if (editingStudent) {
@@ -372,8 +381,8 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
         </div>
       </div>
 
-      {/* Main CA Role Sub-Tabs (Main CA > CA) */}
-      {isMainCa && (
+      {/* Role-Specific Sub-Tabs (Main CA vs Standard CA) */}
+      {isMainCa ? (
         <div className="flex items-center flex-wrap gap-2 border-b border-gray-200 pb-2">
           <button
             type="button"
@@ -419,6 +428,39 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
             <span>Certificate Info &amp; Placeholder Roles</span>
           </button>
         </div>
+      ) : (
+        <div className="flex items-center flex-wrap gap-2 border-b border-gray-200 pb-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('students')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+              activeSubTab === 'students'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>My Students &amp; Certificates ({students.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('shared_forms')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+              activeSubTab === 'shared_forms'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Send Forms to Students &amp; Responses ({sharedForms.length})</span>
+            {formSubmissions.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                {formSubmissions.length} filled
+              </span>
+            )}
+          </button>
+        </div>
       )}
 
       {isMainCa && activeSubTab === 'forms' ? (
@@ -434,6 +476,14 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
           actorUid={ca.uid}
           actorEmail={actorEmail}
           actorRole="main_ca"
+        />
+      ) : !isMainCa && activeSubTab === 'shared_forms' ? (
+        <StandardCaSharedForms
+          ca={ca}
+          actorEmail={actorEmail}
+          students={students}
+          sharedForms={sharedForms}
+          submissions={formSubmissions}
         />
       ) : (
         /* Main Student Management Section */

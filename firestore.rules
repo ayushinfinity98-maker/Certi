@@ -180,6 +180,8 @@ service cloud.firestore {
         data.initiativeName is string && data.initiativeName.size() <= 150 &&
         data.participationDate is string && data.participationDate.size() <= 50 &&
         data.status in ['pending', 'imported', 'rejected'] &&
+        (!('formCreatorUid' in data) || (data.formCreatorUid is string && data.formCreatorUid.size() <= 128)) &&
+        (!('referringCaName' in data) || (data.referringCaName is string && data.referringCaName.size() <= 120)) &&
         (!('customFields' in data) || data.customFields is map);
     }
 
@@ -190,27 +192,49 @@ service cloud.firestore {
         data.roles is list && data.roles.size() <= 60;
     }
 
-    // Shareable Forms created by Main CA or Admin
+    // Shareable Forms created by Main CA or Admin (Standard CAs can read active forms to share with assigned students)
     match /caForms/{formId} {
       allow get: if isValidId(formId);
-      allow list: if isAdmin() || isOwningCa(resource.data.caUid);
+      allow list: if isAdmin() || isOwningCa(resource.data.caUid) || (isSignedIn() && resource.data.isActive == true);
       allow create: if isValidId(formId) && isValidCaForm(incoming()) && (isAdmin() || isMainCa(incoming().caUid));
       allow update: if isValidId(formId) && isValidCaForm(incoming()) && incoming().caUid == existing().caUid && (isAdmin() || isMainCa(existing().caUid));
       allow delete: if isValidId(formId) && (isAdmin() || isMainCa(existing().caUid));
     }
 
-    // Public student submissions (anyone with active form link can create; only Admin / owning CA can read or import)
+    // Public student submissions (anyone with active form link can create; referring CA & form-creator Main CA & Admin can read)
     match /formSubmissions/{submissionId} {
-      allow get: if isValidId(submissionId) && (isAdmin() || isOwningCa(resource.data.caUid));
-      allow list: if isAdmin() || isOwningCa(resource.data.caUid);
+      allow get: if isValidId(submissionId) && (
+        isAdmin() ||
+        isOwningCa(resource.data.caUid) ||
+        (resource.data.formCreatorUid is string && isMainCa(resource.data.formCreatorUid))
+      );
+      allow list: if isAdmin() ||
+        isOwningCa(resource.data.caUid) ||
+        (resource.data.formCreatorUid is string && isOwningCa(resource.data.formCreatorUid));
       allow create: if isValidId(submissionId) &&
         isValidFormSubmission(incoming()) &&
         incoming().status == 'pending' &&
         exists(/databases/$(database)/documents/caForms/$(incoming().formId)) &&
         get(/databases/$(database)/documents/caForms/$(incoming().formId)).data.isActive == true &&
-        get(/databases/$(database)/documents/caForms/$(incoming().formId)).data.caUid == incoming().caUid;
-      allow update: if isValidId(submissionId) && isValidFormSubmission(incoming()) && incoming().caUid == existing().caUid && (isAdmin() || isOwningCa(existing().caUid));
-      allow delete: if isValidId(submissionId) && (isAdmin() || isOwningCa(existing().caUid));
+        incoming().formCreatorUid is string &&
+        incoming().formCreatorUid == get(/databases/$(database)/documents/caForms/$(incoming().formId)).data.caUid &&
+        (
+          incoming().caUid == get(/databases/$(database)/documents/caForms/$(incoming().formId)).data.caUid ||
+          exists(/databases/$(database)/documents/campusAmbassadors/$(incoming().caUid))
+        );
+      allow update: if isValidId(submissionId) &&
+        isValidFormSubmission(incoming()) &&
+        incoming().caUid == existing().caUid &&
+        (
+          isAdmin() ||
+          isOwningCa(existing().caUid) ||
+          (existing().formCreatorUid is string && isMainCa(existing().formCreatorUid))
+        );
+      allow delete: if isValidId(submissionId) && (
+        isAdmin() ||
+        isOwningCa(existing().caUid) ||
+        (existing().formCreatorUid is string && isMainCa(existing().formCreatorUid))
+      );
     }
 
     // Placeholder roles & active certificate info configured by Main CA or Admin

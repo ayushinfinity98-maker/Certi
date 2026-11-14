@@ -20,7 +20,7 @@ import {
   Student
 } from '../types';
 import { stripUndefinedDeep } from './certificateTemplateService';
-import { logAuditEvent } from './dataService';
+import { logAuditEvent, lookupCaDirectoryByCaId } from './dataService';
 
 export function buildDefaultCoreFormFields(ca?: CampusAmbassador): CaFormField[] {
   const today = new Date().toISOString().split('T')[0];
@@ -216,6 +216,31 @@ export async function getPublicFormById(formId: string): Promise<CaRegistrationF
   return { ...snap.data(), id: snap.id } as CaRegistrationForm;
 }
 
+export async function resolveReferringCa(refParam: string): Promise<CampusAmbassador | null> {
+  const clean = refParam.trim();
+  if (!clean) return null;
+
+  try {
+    const directSnap = await getDoc(doc(db, 'campusAmbassadors', clean));
+    if (directSnap.exists()) {
+      const caData = { ...directSnap.data(), uid: directSnap.id } as CampusAmbassador;
+      return caData.status === 'active' ? caData : null;
+    }
+
+    const dirEntry = await lookupCaDirectoryByCaId(clean);
+    if (dirEntry?.uid) {
+      const caSnap = await getDoc(doc(db, 'campusAmbassadors', dirEntry.uid));
+      if (caSnap.exists()) {
+        const caData = { ...caSnap.data(), uid: caSnap.id } as CampusAmbassador;
+        return caData.status === 'active' ? caData : null;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not resolve referring CA:', err);
+  }
+  return null;
+}
+
 export function subscribeToFormsForCA(
   caUid: string,
   onUpdate: (forms: CaRegistrationForm[]) => void
@@ -262,9 +287,33 @@ export function subscribeToAllCaForms(
   }
 }
 
+export function subscribeToActiveSharedCaForms(
+  onUpdate: (forms: CaRegistrationForm[]) => void
+): Unsubscribe {
+  try {
+    const q = query(collection(db, 'caForms'), where('isActive', '==', true));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs
+          .map(d => ({ ...d.data(), id: d.id } as CaRegistrationForm))
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        onUpdate(list);
+      },
+      (err) => {
+        console.warn('subscribeToActiveSharedCaForms warning:', err);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not attach shared caForms listener:', err);
+    return () => {};
+  }
+}
+
 export async function submitPublicStudentForm(
   form: CaRegistrationForm,
-  answers: Record<string, string>
+  answers: Record<string, string>,
+  referringCa?: CampusAmbassador | null
 ): Promise<FormSubmission> {
   if (!form.isActive) {
     throw new Error('This registration form is currently closed by the organizer.');
@@ -319,12 +368,24 @@ export async function submitPublicStudentForm(
   const submissionId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
 
+  const targetCaUid = referringCa?.uid || form.caUid;
+  const targetCaId = referringCa?.caId || form.caId;
+  const targetCaName = referringCa?.name || form.caName;
+  const targetCaCollege = referringCa?.college || form.caCollege;
+
   const submission: FormSubmission = stripUndefinedDeep({
     id: submissionId,
     formId: form.id,
     formTitle: form.title,
-    caUid: form.caUid,
-    caId: form.caId,
+    caUid: targetCaUid,
+    caId: targetCaId,
+    referringCaUid: targetCaUid,
+    referringCaId: targetCaId,
+    referringCaName: targetCaName,
+    referringCaCollege: targetCaCollege,
+    formCreatorUid: form.caUid,
+    formCreatorId: form.caId,
+    formCreatorName: form.caName,
     fullName,
     email,
     college,
@@ -360,6 +421,30 @@ export function subscribeToFormSubmissionsForCA(
     );
   } catch (err) {
     console.warn('Could not attach formSubmissions listener:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToFormSubmissionsByFormCreator(
+  formCreatorUid: string,
+  onUpdate: (submissions: FormSubmission[]) => void
+): Unsubscribe {
+  try {
+    const q = query(collection(db, 'formSubmissions'), where('formCreatorUid', '==', formCreatorUid));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs
+          .map(d => ({ ...d.data(), id: d.id } as FormSubmission))
+          .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+        onUpdate(list);
+      },
+      (err) => {
+        console.warn('subscribeToFormSubmissionsByFormCreator warning:', err);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not attach formCreator submissions listener:', err);
     return () => {};
   }
 }

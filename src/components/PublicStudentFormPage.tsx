@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { CaRegistrationForm } from '../types';
-import { getPublicFormById, submitPublicStudentForm } from '../services/formService';
+import { CampusAmbassador, CaRegistrationForm } from '../types';
+import { getPublicFormById, resolveReferringCa, submitPublicStudentForm } from '../services/formService';
 import { BrandLogo } from './BrandLogo';
 import {
   CheckCircle2,
@@ -23,6 +23,7 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
   onBackToApp
 }) => {
   const [form, setForm] = useState<CaRegistrationForm | null>(null);
+  const [referringCa, setReferringCa] = useState<CampusAmbassador | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,14 +36,23 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
     setError(null);
     setSubmittedSuccess(false);
 
-    getPublicFormById(formId)
-      .then((loaded) => {
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const refParam = (urlParams?.get('ca') || urlParams?.get('ref') || '').trim();
+
+    Promise.all([
+      getPublicFormById(formId),
+      refParam ? resolveReferringCa(refParam) : Promise.resolve(null)
+    ])
+      .then(([loaded, resolvedCa]) => {
         if (cancelled) return;
         setForm(loaded);
+        setReferringCa(resolvedCa);
         if (loaded) {
           const initialAnswers: Record<string, string> = {};
           loaded.fields.forEach(f => {
-            if (f.defaultValue) {
+            if (f.key === 'college' && resolvedCa?.college && (!f.defaultValue || f.defaultValue === loaded.caCollege)) {
+              initialAnswers[f.key] = resolvedCa.college;
+            } else if (f.defaultValue) {
               initialAnswers[f.key] = f.defaultValue;
             }
           });
@@ -70,7 +80,7 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
     setError(null);
     setIsSubmitting(true);
     try {
-      await submitPublicStudentForm(form, answers);
+      await submitPublicStudentForm(form, answers, referringCa);
       setSubmittedSuccess(true);
     } catch (err: any) {
       setError(err?.message || 'Submission failed. Please check your details and try again.');
@@ -83,7 +93,11 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
     if (!form) return;
     const initialAnswers: Record<string, string> = {};
     form.fields.forEach(f => {
-      if (f.defaultValue) initialAnswers[f.key] = f.defaultValue;
+      if (f.key === 'college' && referringCa?.college && (!f.defaultValue || f.defaultValue === form.caCollege)) {
+        initialAnswers[f.key] = referringCa.college;
+      } else if (f.defaultValue) {
+        initialAnswers[f.key] = f.defaultValue;
+      }
     });
     setAnswers(initialAnswers);
     setSubmittedSuccess(false);
@@ -160,7 +174,7 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
             <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto leading-relaxed">
               Thank you, <span className="font-bold text-gray-900">{answers.fullName}</span>. Your details for{' '}
               <span className="font-semibold text-blue-700">{form.title}</span> have been recorded with{' '}
-              <span className="font-semibold">{form.caName}</span>.
+              <span className="font-semibold">{referringCa?.name || form.caName}</span>.
             </p>
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-left max-w-md mx-auto space-y-1">
               <div><span className="text-gray-500">Email:</span> <span className="font-mono font-semibold text-gray-800">{answers.email}</span></div>
@@ -192,14 +206,32 @@ export const PublicStudentFormPage: React.FC<PublicStudentFormPageProps> = ({
                 </p>
               )}
               <div className="pt-2 flex flex-wrap items-center gap-3 text-[11px] text-blue-100">
-                <span className="inline-flex items-center bg-white/15 px-2.5 py-1 rounded-lg">
-                  <UserCheck className="w-3.5 h-3.5 mr-1.5" />
-                  Host: {form.caName} ({form.caId})
-                </span>
-                <span className="inline-flex items-center bg-white/15 px-2.5 py-1 rounded-lg">
-                  <School className="w-3.5 h-3.5 mr-1.5" />
-                  {form.caCollege}
-                </span>
+                {referringCa && referringCa.uid !== form.caUid ? (
+                  <>
+                    <span className="inline-flex items-center bg-white/20 px-2.5 py-1 rounded-lg font-semibold">
+                      <UserCheck className="w-3.5 h-3.5 mr-1.5" />
+                      Shared by CA: {referringCa.name} ({referringCa.caId})
+                    </span>
+                    <span className="inline-flex items-center bg-white/15 px-2.5 py-1 rounded-lg">
+                      <School className="w-3.5 h-3.5 mr-1.5" />
+                      {referringCa.college}
+                    </span>
+                    <span className="inline-flex items-center bg-white/10 px-2.5 py-1 rounded-lg">
+                      Form by: {form.caName}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center bg-white/15 px-2.5 py-1 rounded-lg">
+                      <UserCheck className="w-3.5 h-3.5 mr-1.5" />
+                      Host: {form.caName} ({form.caId})
+                    </span>
+                    <span className="inline-flex items-center bg-white/15 px-2.5 py-1 rounded-lg">
+                      <School className="w-3.5 h-3.5 mr-1.5" />
+                      {form.caCollege}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 

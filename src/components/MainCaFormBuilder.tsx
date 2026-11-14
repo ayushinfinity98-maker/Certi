@@ -16,6 +16,7 @@ import {
   subscribeToAllCaForms,
   subscribeToAllFormSubmissions,
   subscribeToFormsForCA,
+  subscribeToFormSubmissionsByFormCreator,
   subscribeToFormSubmissionsForCA
 } from '../services/formService';
 import {
@@ -35,7 +36,8 @@ import {
   ExternalLink,
   AlertCircle,
   Sparkles,
-  FileText
+  FileText,
+  UserCheck
 } from 'lucide-react';
 
 interface MainCaFormBuilderProps {
@@ -59,6 +61,8 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
   const [copiedFormId, setCopiedFormId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [caFilter, setCaFilter] = useState<string>('all');
+  const [formFilter, setFormFilter] = useState<string>('all');
 
   // New custom field draft
   const [newFieldLabel, setNewFieldLabel] = useState('');
@@ -74,23 +78,53 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
       ? subscribeToAllCaForms(setForms)
       : subscribeToFormsForCA(ca.uid, setForms);
 
-    const unsubSubs = isAdminMode
-      ? subscribeToAllFormSubmissions(setSubmissions)
-      : subscribeToFormSubmissionsForCA(ca.uid, setSubmissions);
+    if (isAdminMode) {
+      const unsubSubs = subscribeToAllFormSubmissions(setSubmissions);
+      return () => {
+        unsubForms();
+        unsubSubs();
+      };
+    }
+
+    let ownSubs: FormSubmission[] = [];
+    let creatorSubs: FormSubmission[] = [];
+
+    const mergeAndSet = () => {
+      const merged = new Map<string, FormSubmission>();
+      [...creatorSubs, ...ownSubs].forEach(item => {
+        merged.set(item.id, item);
+      });
+      const sorted = Array.from(merged.values()).sort(
+        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      );
+      setSubmissions(sorted);
+    };
+
+    const unsubOwn = subscribeToFormSubmissionsForCA(ca.uid, (list) => {
+      ownSubs = list;
+      mergeAndSet();
+    });
+
+    const unsubCreator = subscribeToFormSubmissionsByFormCreator(ca.uid, (list) => {
+      creatorSubs = list;
+      mergeAndSet();
+    });
 
     return () => {
       unsubForms();
-      unsubSubs();
+      unsubOwn();
+      unsubCreator();
     };
   }, [ca.uid, isAdminMode]);
 
-  // Auto-sync pending submissions into Students when form.autoAddStudent is enabled
+  // Auto-sync pending submissions into Students when form.autoAddStudent is enabled (strictly for submissions owned by this CA or Admin)
   useEffect(() => {
     if (forms.length === 0 || submissions.length === 0) return;
     const formMap = new Map(forms.map(f => [f.id, f]));
 
     const pendingToAutoSync = submissions.filter(sub => {
       if (sub.status !== 'pending') return false;
+      if (!isAdminMode && sub.caUid !== ca.uid) return false;
       if (autoImportingIdsRef.current.has(sub.id)) return false;
       const parentForm = formMap.get(sub.formId);
       return parentForm ? parentForm.autoAddStudent !== false : true;
@@ -106,7 +140,7 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
         console.warn('Auto-import submission notice:', err);
       }
     });
-  }, [forms, submissions, actorEmail]);
+  }, [forms, submissions, actorEmail, ca.uid, isAdminMode]);
 
   const handleCreateNewForm = () => {
     const now = new Date().toISOString();
@@ -285,6 +319,41 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
   };
 
   const pendingCount = submissions.filter(s => s.status === 'pending').length;
+
+  // Group submissions by referring CA ("kisne form bharwaya")
+  const caBreakdownMap = new Map<string, {
+    uid: string;
+    caId: string;
+    name: string;
+    college: string;
+    count: number;
+    isSelf: boolean;
+  }>();
+
+  submissions.forEach((sub) => {
+    const refUid = sub.referringCaUid || sub.caUid;
+    const existing = caBreakdownMap.get(refUid);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      caBreakdownMap.set(refUid, {
+        uid: refUid,
+        caId: sub.referringCaId || sub.caId,
+        name: sub.referringCaName || (refUid === ca.uid ? ca.name : sub.caId),
+        college: sub.referringCaCollege || sub.college,
+        count: 1,
+        isSelf: refUid === (sub.formCreatorUid || ca.uid)
+      });
+    }
+  });
+  const caBreakdownList = Array.from(caBreakdownMap.values()).sort((a, b) => b.count - a.count);
+
+  const filteredSubmissions = submissions.filter((sub) => {
+    const refUid = sub.referringCaUid || sub.caUid;
+    const matchesCa = caFilter === 'all' || refUid === caFilter;
+    const matchesForm = formFilter === 'all' || sub.formId === formFilter;
+    return matchesCa && matchesForm;
+  });
 
   return (
     <div className="space-y-6">
@@ -734,7 +803,7 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
           <div className="flex items-center space-x-2">
             <Users className="w-4 h-4 text-indigo-600" />
             <h4 className="text-sm font-bold text-gray-900">
-              Student Form Responses ({submissions.length})
+              Student Form Responses &amp; CA Referrals ({submissions.length})
             </h4>
             {pendingCount > 0 && (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
@@ -742,91 +811,193 @@ export const MainCaFormBuilder: React.FC<MainCaFormBuilderProps> = ({
               </span>
             )}
           </div>
-          <span className="text-[11px] text-gray-400">
-            Responses from forms with Auto-Add enabled sync automatically to Registered Students.
-          </span>
+          <div className="flex items-center space-x-2">
+            {forms.length > 1 && (
+              <select
+                value={formFilter}
+                onChange={(e) => setFormFilter(e.target.value)}
+                className="px-2.5 py-1 border border-gray-300 rounded-xl text-[11px] bg-white"
+              >
+                <option value="all">All Forms</option>
+                {forms.map(f => (
+                  <option key={f.id} value={f.id}>{f.title}</option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
-        {submissions.length === 0 ? (
+        {/* Referring CA Breakdown Strip ("Kisne Form Bharwaya") */}
+        {caBreakdownList.length > 0 && (
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+            <span className="text-[11px] font-bold text-gray-700 flex items-center">
+              <UserCheck className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
+              Submissions by Campus Ambassador (Click a CA to filter students):
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCaFilter('all')}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition ${
+                  caFilter === 'all'
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                }`}
+              >
+                All CAs ({submissions.length})
+              </button>
+              {caBreakdownList.map((entry) => (
+                <button
+                  key={entry.uid}
+                  type="button"
+                  onClick={() => setCaFilter(caFilter === entry.uid ? 'all' : entry.uid)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold border transition flex items-center space-x-1.5 ${
+                    caFilter === entry.uid
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white text-gray-800 border-gray-300 hover:bg-indigo-50'
+                  }`}
+                >
+                  <span>{entry.name}</span>
+                  <span className={`font-mono text-[10px] ${caFilter === entry.uid ? 'text-indigo-100' : 'text-gray-500'}`}>
+                    ({entry.caId})
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      caFilter === entry.uid
+                        ? 'bg-white/20 text-white'
+                        : entry.isSelf
+                        ? 'bg-purple-100 text-purple-800'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}
+                  >
+                    {entry.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {filteredSubmissions.length === 0 ? (
           <p className="text-xs text-gray-400 py-4 text-center">
-            No form responses received yet. Share a form link with students to start collecting registrations.
+            No form responses received yet. Share a form link or let Standard CAs distribute it to their assigned students.
           </p>
         ) : (
           <div className="overflow-x-auto border border-gray-200 rounded-xl">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
-                  <th className="py-2.5 px-3">Student</th>
-                  <th className="py-2.5 px-3">Form & Event</th>
+                  <th className="py-2.5 px-3">Student Details</th>
+                  <th className="py-2.5 px-3">Referred By (Kisne Bharwaya)</th>
+                  <th className="py-2.5 px-3">Form &amp; Event</th>
                   <th className="py-2.5 px-3">Custom Form Info</th>
                   <th className="py-2.5 px-3">Status</th>
                   <th className="py-2.5 px-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {submissions.map((sub) => (
-                  <tr key={sub.id} className="hover:bg-gray-50/70">
-                    <td className="py-2.5 px-3">
-                      <div className="font-bold text-gray-900">{sub.fullName}</div>
-                      <div className="text-[11px] font-mono text-gray-500">{sub.email}</div>
-                      <div className="text-[10px] text-gray-400">{sub.college}</div>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <div className="font-semibold text-gray-800">{sub.formTitle}</div>
-                      <div className="text-[11px] text-blue-600">{sub.initiativeName} ({sub.participationDate})</div>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      {Object.keys(sub.customFields || {}).length === 0 ? (
-                        <span className="text-[10px] text-gray-400 italic">Standard fields only</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {Object.entries(sub.customFields || {}).map(([k, v]) => (
-                            <span
-                              key={k}
-                              className="px-1.5 py-0.5 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded text-[10px]"
+                {filteredSubmissions.map((sub) => {
+                  const isOwnSubmission = isAdminMode || sub.caUid === ca.uid;
+                  const refName = sub.referringCaName || (sub.caUid === ca.uid ? ca.name : sub.caId);
+                  const refId = sub.referringCaId || sub.caId;
+                  const isFromStandardCa = (sub.referringCaUid || sub.caUid) !== (sub.formCreatorUid || ca.uid);
+
+                  return (
+                    <tr key={sub.id} className="hover:bg-gray-50/70">
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-gray-900">{sub.fullName}</div>
+                        <div className="text-[11px] font-mono text-gray-500">{sub.email}</div>
+                        <div className="text-[10px] text-gray-400">
+                          {sub.college} {sub.semester ? `• ${sub.semester}` : ''}
+                        </div>
+                        <div className="text-[10px] text-gray-400">
+                          Submitted: {new Date(sub.submittedAt).toLocaleString()}
+                        </div>
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-gray-900 flex items-center flex-wrap gap-1">
+                          <span>{refName}</span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+                              isFromStandardCa
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : 'bg-purple-50 text-purple-700 border-purple-200'
+                            }`}
+                          >
+                            {isFromStandardCa ? 'Standard CA' : 'Direct'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-mono text-gray-500">{refId}</div>
+                        {sub.referringCaCollege && (
+                          <div className="text-[10px] text-gray-400">{sub.referringCaCollege}</div>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-gray-800">{sub.formTitle}</div>
+                        <div className="text-[11px] text-blue-600">{sub.initiativeName} ({sub.participationDate})</div>
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        {Object.keys(sub.customFields || {}).length === 0 ? (
+                          <span className="text-[10px] text-gray-400 italic">Standard fields only</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {Object.entries(sub.customFields || {}).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="px-1.5 py-0.5 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded text-[10px]"
+                              >
+                                <span className="font-mono font-bold">{k}:</span> {v}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            sub.status === 'imported'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : sub.status === 'rejected'
+                              ? 'bg-red-50 text-red-700 border border-red-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}
+                        >
+                          {sub.status === 'imported'
+                            ? 'Added to Students'
+                            : !isOwnSubmission && sub.status === 'pending'
+                            ? 'Pending CA Sync'
+                            : sub.status}
+                        </span>
+                      </td>
+
+                      <td className="py-2.5 px-3 text-right">
+                        {sub.status === 'pending' && isOwnSubmission && (
+                          <div className="flex items-center justify-end space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleManualImportSubmission(sub)}
+                              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold"
                             >
-                              <span className="font-mono font-bold">{k}:</span> {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          sub.status === 'imported'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : sub.status === 'rejected'
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
-                      >
-                        {sub.status === 'imported' ? 'Added to Students' : sub.status}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      {sub.status === 'pending' && (
-                        <div className="flex items-center justify-end space-x-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleManualImportSubmission(sub)}
-                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold"
-                          >
-                            Import
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRejectSubmission(sub)}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded"
-                            title="Reject"
-                          >
-                            <XCircle className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                              Import
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectSubmission(sub)}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded"
+                              title="Reject"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -219,10 +219,7 @@ export const CaModal: React.FC<CaModalProps> = ({
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (!googleEmail) setGoogleEmail(e.target.value);
-                  }}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="maya@university.edu"
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                 />

@@ -35,6 +35,22 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/campusAmbassadors/$(request.auth.uid));
     }
 
+    function isEmailAuthorizedForCa(caUid) {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/campusAmbassadors/$(caUid)) &&
+        (
+          (get(/databases/$(database)/documents/campusAmbassadors/$(caUid)).data.googleEmail is string &&
+            get(/databases/$(database)/documents/campusAmbassadors/$(caUid)).data.googleEmail.lower() == request.auth.token.email.lower()) ||
+          (get(/databases/$(database)/documents/campusAmbassadors/$(caUid)).data.email is string &&
+            get(/databases/$(database)/documents/campusAmbassadors/$(caUid)).data.email.lower() == request.auth.token.email.lower())
+        );
+    }
+
+    function isOwningCa(caUid) {
+      return isSignedIn() && (request.auth.uid == caUid || isEmailAuthorizedForCa(caUid));
+    }
+
     // Student Validation
     function isValidStudent(data) {
       return data.keys().hasAll(['caUid', 'fullName', 'email', 'college', 'semester', 'initiativeName', 'participationDate', 'certificateStatus']) &&
@@ -66,7 +82,21 @@ service cloud.firestore {
     match /campusAmbassadors/{caUid} {
       // Allow reading so that login credentials and Google sign-ins can verify authorization without PERMISSION_DENIED
       allow get: if true;
-      allow list: if isAdmin() || (isSignedIn() && (resource.data.googleEmail == request.auth.token.email.lower() || resource.data.email == request.auth.token.email.lower()));
+      allow list: if isAdmin() || (
+        isSignedIn() &&
+        request.auth.token.email != null &&
+        (
+          (resource.data.googleEmail is string && resource.data.googleEmail.lower() == request.auth.token.email.lower()) ||
+          (resource.data.email is string && resource.data.email.lower() == request.auth.token.email.lower())
+        )
+      );
+      allow write: if isAdmin();
+    }
+
+    // CA ID -> Email lookup directory (no passwords or PII) for CA ID login
+    match /caDirectory/{caIdKey} {
+      allow get: if true;
+      allow list: if false;
       allow write: if isAdmin();
     }
 
@@ -78,11 +108,11 @@ service cloud.firestore {
 
     // Students collection
     match /students/{studentId} {
-      allow get: if isValidId(studentId) && (isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid));
-      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
-      allow create: if isValidId(studentId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid)) && isValidStudent(incoming());
-      allow update: if isValidId(studentId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid && incoming().caUid == request.auth.uid)) && isValidStudent(incoming());
-      allow delete: if isValidId(studentId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid));
+      allow get: if isValidId(studentId) && (isAdmin() || isOwningCa(resource.data.caUid));
+      allow list: if isAdmin() || isOwningCa(resource.data.caUid);
+      allow create: if isValidId(studentId) && (isAdmin() || isOwningCa(incoming().caUid)) && isValidStudent(incoming());
+      allow update: if isValidId(studentId) && (isAdmin() || (isOwningCa(existing().caUid) && incoming().caUid == existing().caUid)) && isValidStudent(incoming());
+      allow delete: if isValidId(studentId) && (isAdmin() || isOwningCa(existing().caUid));
     }
 
     // Certificates collection
@@ -90,10 +120,10 @@ service cloud.firestore {
       // Public read for single certificate verification via QR code or ID lookup
       allow get: if isValidId(certificateId);
       // Listing restricted to Admin or the owning CA
-      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
+      allow list: if isAdmin() || isOwningCa(resource.data.caUid);
       // Issuance
-      allow create: if isValidId(certificateId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid)) && isValidCertificate(incoming());
-      allow update: if isValidId(certificateId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid && incoming().caUid == request.auth.uid)) && isValidCertificate(incoming());
+      allow create: if isValidId(certificateId) && (isAdmin() || isOwningCa(incoming().caUid)) && isValidCertificate(incoming());
+      allow update: if isValidId(certificateId) && (isAdmin() || (isOwningCa(existing().caUid) && incoming().caUid == existing().caUid)) && isValidCertificate(incoming());
       allow delete: if isAdmin();
     }
 
@@ -111,17 +141,17 @@ service cloud.firestore {
 
     // Email Delivery Logs
     match /emailLogs/{logId} {
-      allow get: if isValidId(logId) && (isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid));
-      allow list: if isAdmin() || (isSignedIn() && resource.data.caUid == request.auth.uid);
-      allow create: if isValidId(logId) && (isAdmin() || (isSignedIn() && incoming().caUid == request.auth.uid));
-      allow update: if isValidId(logId) && (isAdmin() || (isSignedIn() && existing().caUid == request.auth.uid));
+      allow get: if isValidId(logId) && (isAdmin() || isOwningCa(resource.data.caUid));
+      allow list: if isAdmin() || isOwningCa(resource.data.caUid);
+      allow create: if isValidId(logId) && (isAdmin() || isOwningCa(incoming().caUid));
+      allow update: if isValidId(logId) && (isAdmin() || isOwningCa(existing().caUid));
       allow delete: if isAdmin();
     }
 
     // Immutable Audit Logs
     match /auditLogs/{logId} {
       allow get, list: if isAdmin();
-      allow create: if isValidId(logId) && isSignedIn() && incoming().actorUid == request.auth.uid;
+      allow create: if isValidId(logId) && isSignedIn() && (incoming().actorUid == request.auth.uid || isOwningCa(incoming().actorUid));
       allow update, delete: if false;
     }
   }

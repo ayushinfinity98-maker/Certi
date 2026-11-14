@@ -13,7 +13,11 @@ import {
   onSnapshot,
   Unsubscribe
 } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import {
+  createUserWithEmailAndPassword,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+import { auth, db, getSecondaryAuth } from '../firebase/config';
 import { Student, Certificate, CampusAmbassador, EmailLog, AuditLog } from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { dispatchCertificateEmail } from './emailService';
@@ -601,12 +605,103 @@ export async function getCertificateForVerification(certificateId: string): Prom
   return foundInCache || null;
 }
  
+function sanitizeDirectoryKey(raw: string): string {
+  return raw.trim().replace(/\//g, '_');
+}
+
+async function writeCaDirectoryEntries(ca: CampusAmbassador): Promise<void> {
+  const cleanCaId = ca.caId ? sanitizeDirectoryKey(ca.caId.toUpperCase()) : '';
+  const cleanEmail = ca.email ? sanitizeDirectoryKey(ca.email.toLowerCase()) : '';
+  const cleanGoogleEmail = ca.googleEmail ? sanitizeDirectoryKey(ca.googleEmail.toLowerCase()) : cleanEmail;
+
+  const payload = {
+    uid: ca.uid,
+    caId: cleanCaId,
+    email: cleanEmail,
+    googleEmail: cleanGoogleEmail,
+    updatedAt: new Date().toISOString()
+  };
+
+  const keys = Array.from(new Set([cleanCaId, cleanEmail, cleanGoogleEmail].filter(Boolean)));
+  await Promise.all(
+    keys.map(key =>
+      setDoc(doc(db, 'caDirectory', key), payload, { merge: true }).catch(err => {
+        console.warn(`Firestore caDirectory sync notice for ${key}:`, err);
+      })
+    )
+  );
+}
+
+async function provisionCaFirebaseAuth(email: string, password: string): Promise<void> {
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanPassword = password.trim();
+  if (!cleanEmail || !cleanPassword || cleanPassword.length < 6) return;
+
+  const secondaryAuth = getSecondaryAuth();
+  try {
+    await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
+  } catch (err: any) {
+    // Expected if the CA account already exists in Firebase Auth
+    if (err?.code !== 'auth/email-already-in-use') {
+      console.warn('Secondary Firebase Auth provisioning notice:', err?.code || err?.message);
+    }
+  } finally {
+    try {
+      await firebaseSignOut(secondaryAuth);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function lookupCaDirectoryByCaId(
+  identifier: string
+): Promise<{ uid: string; email: string; googleEmail?: string; caId?: string } | null> {
+  const trimmed = identifier.trim();
+  if (!trimmed) return null;
+
+  const dirKey = sanitizeDirectoryKey(trimmed.includes('@') ? trimmed.toLowerCase() : trimmed.toUpperCase());
+
+  try {
+    const snap = await getDoc(doc(db, 'caDirectory', dirKey));
+    if (snap.exists()) {
+      const data = snap.data() as { uid: string; email: string; googleEmail?: string; caId?: string };
+      if (data?.uid && data?.email) {
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('Firestore lookupCaDirectoryByCaId notice:', error);
+  }
+
+  // Fallback to local cache / seed CAs
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const lower = trimmed.toLowerCase();
+  const upper = trimmed.toUpperCase();
+  const match = cached.find(
+    c =>
+      c.caId?.toUpperCase().trim() === upper ||
+      c.email?.toLowerCase().trim() === lower ||
+      (c.googleEmail && c.googleEmail.toLowerCase().trim() === lower)
+  );
+  if (match) {
+    return {
+      uid: match.uid,
+      email: match.email.toLowerCase().trim(),
+      googleEmail: (match.googleEmail || match.email).toLowerCase().trim(),
+      caId: match.caId.toUpperCase().trim()
+    };
+  }
+
+  return null;
+}
+
 /**
  * Super Admin Management: Campus Ambassadors
  */
 export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
- 
+
   try {
     const q = query(collection(db, 'campusAmbassadors'));
     const snap = await getDocs(q);
@@ -617,34 +712,57 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
       fromDb.forEach(c => map.set(c.uid, c));
       const merged = Array.from(map.values());
       saveCache(KEY_CAS, merged);
+
+      // If Super Admin is signed in, lazily keep caDirectory synced for existing CAs
+      if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
+        void Promise.all(fromDb.map(ca => writeCaDirectoryEntries(ca))).catch(() => {});
+      }
+
       return merged;
     }
   } catch (error) {
     console.warn('Firestore getAllCampusAmbassadors fallback to cache:', error);
   }
- 
+
   return cached;
 }
- 
+
 /**
- * Login-time lookup: finds ONLY the CA whose Google email matches.
- * Uses a where() query so Firestore rules can allow it for a signed-in CA
+ * Login-time lookup: finds ONLY the CA whose Google email or primary email matches.
+ * Uses where() queries + caDirectory fallback so Firestore rules allow it for a signed-in CA
  * without exposing the whole collection.
  */
 export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
   const emailLower = email.toLowerCase().trim();
- 
+  if (!emailLower) return null;
+
   try {
-    const q = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const d = snap.docs[0];
+    const qGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
+    const snapGoogle = await getDocs(qGoogle);
+    if (!snapGoogle.empty) {
+      const d = snapGoogle.docs[0];
       return { ...d.data(), uid: d.id } as CampusAmbassador;
+    }
+
+    const qEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', emailLower));
+    const snapEmail = await getDocs(qEmail);
+    if (!snapEmail.empty) {
+      const d = snapEmail.docs[0];
+      return { ...d.data(), uid: d.id } as CampusAmbassador;
+    }
+
+    // Fallback via caDirectory exact key lookup
+    const dirEntry = await lookupCaDirectoryByCaId(emailLower);
+    if (dirEntry?.uid) {
+      const docSnap = await getDoc(doc(db, 'campusAmbassadors', dirEntry.uid));
+      if (docSnap.exists()) {
+        return { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador;
+      }
     }
   } catch (error) {
     console.warn('Firestore getCampusAmbassadorByGoogleEmail notice:', error);
   }
- 
+
   // Fallback: local cache (only helps on the device where the CA was created)
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
   return (
@@ -655,7 +773,7 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
     ) || null
   );
 }
- 
+
 export async function createCampusAmbassadorAccount(
   caData: Omit<CampusAmbassador, 'createdAt' | 'updatedAt' | 'totalStudents' | 'totalCertificates'>,
   adminUid: string,
@@ -663,37 +781,47 @@ export async function createCampusAmbassadorAccount(
 ): Promise<CampusAmbassador> {
   const uid = caData.uid || `ca_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
- 
+
+  const normalizedEmail = caData.email.toLowerCase().trim();
+  const normalizedGoogleEmail = (caData.googleEmail || caData.email).toLowerCase().trim();
+  const normalizedCaId = caData.caId.toUpperCase().trim();
+
   const defaultPermissions = caData.permissions || {
     canIssueCertificates: true,
     canImportCsv: true,
     canEditStudents: true,
     canSendEmails: true
   };
- 
+
   const newCA: CampusAmbassador = {
     ...caData,
     uid,
+    caId: normalizedCaId,
+    email: normalizedEmail,
     status: caData.status || 'active',
     allowGoogleLogin: caData.allowGoogleLogin !== false,
-    googleEmail: caData.googleEmail || caData.email,
+    googleEmail: normalizedGoogleEmail,
     permissions: defaultPermissions,
     totalStudents: 0,
     totalCertificates: 0,
     createdAt: now,
     updatedAt: now
   };
- 
+
   // Immediate cache save
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
   saveCache(KEY_CAS, [newCA, ...cached]);
- 
+
   try {
     await setDoc(doc(db, 'campusAmbassadors', uid), newCA);
+    await writeCaDirectoryEntries(newCA);
   } catch (error) {
     console.warn('Firestore createCampusAmbassadorAccount notice:', error);
   }
- 
+
+  // Provision Firebase Auth email/password account without affecting current Admin session
+  await provisionCaFirebaseAuth(normalizedEmail, newCA.initialPassword || 'Ambassador@2026');
+
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -704,7 +832,7 @@ export async function createCampusAmbassadorAccount(
   );
   return newCA;
 }
- 
+
 export async function updateCampusAmbassador(
   caUid: string,
   updates: Partial<CampusAmbassador>,
@@ -712,28 +840,60 @@ export async function updateCampusAmbassador(
   adminEmail: string
 ): Promise<void> {
   const now = new Date().toISOString();
+  const normalizedUpdates: Partial<CampusAmbassador> = { ...updates };
+  if (typeof normalizedUpdates.email === 'string') {
+    normalizedUpdates.email = normalizedUpdates.email.toLowerCase().trim();
+  }
+  if (typeof normalizedUpdates.googleEmail === 'string') {
+    normalizedUpdates.googleEmail = normalizedUpdates.googleEmail.toLowerCase().trim();
+  }
+  if (typeof normalizedUpdates.caId === 'string') {
+    normalizedUpdates.caId = normalizedUpdates.caId.toUpperCase().trim();
+  }
+
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  let mergedCA: CampusAmbassador | null = null;
   saveCache(
     KEY_CAS,
-    cached.map(c => c.uid === caUid ? { ...c, ...updates, updatedAt: now } : c)
+    cached.map(c => {
+      if (c.uid === caUid) {
+        mergedCA = { ...c, ...normalizedUpdates, updatedAt: now };
+        return mergedCA;
+      }
+      return c;
+    })
   );
- 
+
   try {
     const ref = doc(db, 'campusAmbassadors', caUid);
     await updateDoc(ref, {
-      ...updates,
+      ...normalizedUpdates,
       updatedAt: now
     });
+
+    if (!mergedCA) {
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        mergedCA = { ...snap.data(), uid: snap.id } as CampusAmbassador;
+      }
+    }
+
+    if (mergedCA) {
+      await writeCaDirectoryEntries(mergedCA);
+      if (normalizedUpdates.email || normalizedUpdates.initialPassword) {
+        await provisionCaFirebaseAuth(mergedCA.email, mergedCA.initialPassword || 'Ambassador@2026');
+      }
+    }
   } catch (error) {
     console.warn('Firestore updateCampusAmbassador notice:', error);
   }
- 
+
   await logAuditEvent(
     adminUid,
     adminEmail,
     'admin',
     'CA_ACCOUNT_UPDATED',
-    `Updated CA ${caUid} details: ${Object.keys(updates).join(', ')}`,
+    `Updated CA ${caUid} details: ${Object.keys(normalizedUpdates).join(', ')}`,
     caUid
   );
 }

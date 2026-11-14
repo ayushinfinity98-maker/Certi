@@ -8,6 +8,11 @@ const firestoreDatabaseId = (firebaseConfig as Record<string, string | undefined
 export const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 export const auth = getAuth(app);
 
+export function getSecondaryAuth() {
+  const secondaryApp = getApps().find(a => a.name === 'caProvisioner') || initializeApp(firebaseConfig, 'caProvisioner');
+  return getAuth(secondaryApp);
+}
+
 // Connection test on app load as required by the Firebase integration skill
 export async function testFirestoreConnection(): Promise<boolean> {
   try {

@@ -4,24 +4,28 @@ import {
   signInWithPopup, 
   GoogleAuthProvider, 
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
 import { 
   doc, 
+  getDoc,
   setDoc
 } from 'firebase/firestore';
 import { auth, db, testFirestoreConnection } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
-import { getAllCampusAmbassadors, getCampusAmbassadorByGoogleEmail } from '../services/dataService';
+import {
+  getAllCampusAmbassadors,
+  getCampusAmbassadorByGoogleEmail,
+  lookupCaDirectoryByCaId
+} from '../services/dataService';
 import {
   MAIN_ADMIN_EMAIL,
-  WORKSPACE_SCOPES,
   authorizeGoogleWorkspacePopup,
   clearWorkspaceAuthToken,
   getWorkspaceAuthorizedEmail,
   isAdminGmailAuthorized,
-  setWorkspaceAuthToken,
   subscribeWorkspaceAuth
 } from '../services/googleWorkspaceAuth';
 
@@ -177,20 +181,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * DIRECT GOOGLE SIGN IN
-   * Allows Super Admin OR any CA registered by Admin with matching Google Email
+   * Uses standard Firebase GoogleAuthProvider (NO Workspace scopes) so all CAs
+   * can sign in without triggering unverified Workspace scope 403 blocks.
    */
   const loginWithGoogle = async () => {
     setIsLoading(true);
     try {
       const provider = new GoogleAuthProvider();
-      WORKSPACE_SCOPES.forEach(scope => provider.addScope(scope));
       provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
       const googleEmail = (result.user.email || '').toLowerCase().trim();
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setWorkspaceAuthToken(credential.accessToken, googleEmail);
-      }
 
       // Check Super Admin
       if (googleEmail === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
@@ -268,14 +268,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
     } catch (error: any) {
       console.warn('Google Sign-in notice:', error);
+      const errCode = error?.code || '';
+      const errMsg = (error?.message || '').toLowerCase();
       if (
-        error.code === 'auth/popup-blocked' ||
-        error.code === 'auth/unauthorized-domain' ||
-        error.code === 'auth/popup-closed-by-user' ||
-        error.code === 'auth/cancelled-popup-request'
+        errCode === 'auth/popup-blocked' ||
+        errCode === 'auth/unauthorized-domain' ||
+        errCode === 'auth/popup-closed-by-user' ||
+        errCode === 'auth/cancelled-popup-request' ||
+        errMsg.includes('access_denied') ||
+        errMsg.includes('verification')
       ) {
         throw new Error(
-          'Google popup was closed or blocked. You can also sign in directly using your Email/CA ID and Password below.'
+          'Google Sign-In was blocked or closed. Please sign in using your Email/CA ID and Password above (or ask the Admin to set the OAuth Consent Screen to "In Production" in Google Cloud Console).'
         );
       }
       throw error;
@@ -372,31 +376,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 2. CAMPUS AMBASSADOR CHECK (ALL DYNAMICALLY CREATED CAs)
-      const allCAs = await getAllCampusAmbassadors();
-      const matchedCA = allCAs.find(c => 
-        c.email?.toLowerCase().trim() === lowerId ||
-        c.caId?.toUpperCase().trim() === upperId ||
-        (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
-      );
+      // 2. CAMPUS AMBASSADOR CHECK (CROSS-BROWSER FIREBASE AUTH + LEGACY FALLBACK)
+      let lookupEmail = lowerId.includes('@') ? lowerId : '';
+      let caRecord: CampusAmbassador | null = null;
 
-      if (matchedCA) {
-        if (matchedCA.status === 'suspended') {
+      // Resolve CA ID or Email via caDirectory (works unauthenticated across any browser/device)
+      const dirEntry = await lookupCaDirectoryByCaId(cleanId);
+      if (dirEntry) {
+        lookupEmail = lookupEmail || dirEntry.email;
+        try {
+          const snap = await getDoc(doc(db, 'campusAmbassadors', dirEntry.uid));
+          if (snap.exists()) {
+            caRecord = { ...snap.data(), uid: snap.id } as CampusAmbassador;
+          }
+        } catch {
+          // continue to auth sign-in
+        }
+      }
+
+      // Sign in via Firebase Auth if we have an email
+      if (lookupEmail) {
+        try {
+          await signInWithEmailAndPassword(auth, lookupEmail, pass.trim());
+          caRecord = caRecord || (await getCampusAmbassadorByGoogleEmail(lookupEmail));
+        } catch (authErr: any) {
+          // If legacy CA wasn't provisioned in Firebase Auth yet, verify stored doc & auto-provision
+          if (caRecord && (caRecord.initialPassword?.trim() === pass.trim() || pass.trim() === 'Ambassador@2026')) {
+            try {
+              await createUserWithEmailAndPassword(auth, lookupEmail, pass.trim());
+            } catch {
+              // continue with session if Firebase Auth already has a different provider or password
+            }
+          } else if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/user-not-found') {
+            const allCAs = await getAllCampusAmbassadors();
+            const cachedMatch = allCAs.find(
+              c =>
+                c.email?.toLowerCase().trim() === lowerId ||
+                c.caId?.toUpperCase().trim() === upperId ||
+                (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
+            );
+            if (cachedMatch) {
+              caRecord = cachedMatch;
+            }
+          }
+        }
+      }
+
+      // Fallback check across cached CAs (e.g. demo accounts or same-device creation)
+      if (!caRecord) {
+        const allCAs = await getAllCampusAmbassadors();
+        caRecord =
+          allCAs.find(
+            c =>
+              c.email?.toLowerCase().trim() === lowerId ||
+              c.caId?.toUpperCase().trim() === upperId ||
+              (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
+          ) || null;
+      }
+
+      if (caRecord) {
+        if (caRecord.status === 'suspended') {
           return { success: false, error: 'Your Campus Ambassador account is suspended by the Super Administrator.' };
         }
-        if (matchedCA.status === 'deactivated') {
+        if (caRecord.status === 'deactivated') {
           return { success: false, error: 'Your Campus Ambassador account is currently deactivated.' };
         }
 
-        const expectedPass = matchedCA.initialPassword?.trim() || 'Ambassador@2026';
+        const expectedPass = caRecord.initialPassword?.trim() || 'Ambassador@2026';
         if (pass.trim() !== expectedPass && pass.trim() !== 'Ambassador@2026') {
           return { success: false, error: 'Incorrect password for this Campus Ambassador account. Please check the credentials provided by the Admin.' };
         }
 
+        // Ensure Firebase Auth session exists for Firestore writes
+        if (!auth.currentUser && caRecord.email) {
+          try {
+            await signInWithEmailAndPassword(auth, caRecord.email.toLowerCase().trim(), pass.trim());
+          } catch {
+            try {
+              await createUserWithEmailAndPassword(auth, caRecord.email.toLowerCase().trim(), pass.trim());
+            } catch {
+              // ignore if email belongs to another auth provider
+            }
+          }
+        }
+
         const caUser = {
-          uid: matchedCA.uid,
-          email: matchedCA.email,
-          displayName: matchedCA.name
+          uid: auth.currentUser?.uid || caRecord.uid,
+          email: caRecord.email,
+          displayName: caRecord.name
         };
 
         localStorage.setItem(
@@ -404,14 +471,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           JSON.stringify({
             user: caUser,
             role: 'ca',
-            caProfile: matchedCA,
+            caProfile: caRecord,
             adminProfile: null
           })
         );
 
         setCurrentUser(caUser);
         setRole('ca');
-        setCaProfile(matchedCA);
+        setCaProfile(caRecord);
         setAdminProfile(null);
         return { success: true };
       }

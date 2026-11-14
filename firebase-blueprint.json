@@ -166,6 +166,19 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
       },
       "required": ["id", "title"]
+    },
+    "CaDirectoryEntry": {
+      "title": "CaDirectoryEntry",
+      "description": "Lightweight lookup index mapping CA ID or email to Campus Ambassador UID without exposing sensitive fields",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Campus Ambassador document UID" },
+        "caId": { "type": "string", "description": "Assigned CA ID" },
+        "email": { "type": "string", "format": "email", "description": "Official CA email" },
+        "googleEmail": { "type": "string", "format": "email", "description": "Google account email" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last sync timestamp" }
+      },
+      "required": ["uid", "email"]
     }
   },
   "firestore": {
@@ -176,6 +189,10 @@
     "/campusAmbassadors/{caUid}": {
       "schema": "CampusAmbassador",
       "description": "Campus Ambassador directory and assigned profile"
+    },
+    "/caDirectory/{caIdKey}": {
+      "schema": "CaDirectoryEntry",
+      "description": "Exact-key CA lookup index for CA ID and email login"
     },
     "/students/{studentId}": {
       "schema": "Student",

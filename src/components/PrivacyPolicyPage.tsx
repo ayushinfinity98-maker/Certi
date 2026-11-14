@@ -11,7 +11,8 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({
   onNavigateHome,
   onNavigateTerms
 }) => {
-  const contactEmail = (import.meta.env.VITE_CONTACT_EMAIL as string | undefined)?.trim();
+  const contactEmail =
+    (import.meta.env.VITE_CONTACT_EMAIL as string | undefined)?.trim() || 'ayushinfinity98@gmail.com';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
@@ -127,23 +128,16 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({
           </section>
 
           <section className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
-            <h2 className="text-sm font-bold text-gray-900">5. Contact</h2>
+            <h2 className="text-sm font-bold text-gray-900">5. Owner Contact Info</h2>
             <p className="text-sm text-gray-600">
-              For privacy questions or data deletion requests, please <span className="font-semibold text-gray-800">Contact the program administrator</span>
-              {contactEmail ? (
-                <>
-                  {' '}at{' '}
-                  <a
-                    href={`mailto:${contactEmail}`}
-                    className="font-mono text-blue-600 hover:underline"
-                  >
-                    {contactEmail}
-                  </a>
-                  .
-                </>
-              ) : (
-                '.'
-              )}
+              For privacy questions or data deletion requests, please <span className="font-semibold text-gray-800">Contact the program administrator</span> at{' '}
+              <a
+                href={`mailto:${contactEmail}`}
+                className="font-mono text-blue-600 hover:underline"
+              >
+                {contactEmail}
+              </a>
+              .
             </p>
           </section>
         </article>

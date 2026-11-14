@@ -7,7 +7,8 @@ import { CaDashboard } from './components/CaDashboard';
 import { VerificationPage } from './components/VerificationPage';
 import { PrivacyPolicyPage } from './components/PrivacyPolicyPage';
 import { TermsOfServicePage } from './components/TermsOfServicePage';
-import { ShieldAlert, Award, LogOut } from 'lucide-react';
+import { BrandLogo } from './components/BrandLogo';
+import { ShieldAlert, LogOut } from 'lucide-react';
 
 type PublicView = 'app' | 'verify' | 'privacy' | 'terms';
 
@@ -97,13 +98,8 @@ function AppContent() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="flex items-center space-x-1 mb-4 select-none animate-pulse">
-          <span className="text-3xl font-bold text-[#4285F4]">G</span>
-          <span className="text-3xl font-bold text-[#EA4335]">o</span>
-          <span className="text-3xl font-bold text-[#FBBC05]">o</span>
-          <span className="text-3xl font-bold text-[#4285F4]">g</span>
-          <span className="text-3xl font-bold text-[#34A853]">l</span>
-          <span className="text-3xl font-bold text-[#EA4335]">e</span>
+        <div className="mb-4 animate-pulse">
+          <BrandLogo size="lg" />
         </div>
         <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
         <p className="text-xs text-gray-500 font-medium tracking-wide">

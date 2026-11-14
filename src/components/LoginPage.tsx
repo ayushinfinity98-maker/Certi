@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth, BOOTSTRAP_ADMIN_EMAIL } from '../context/AuthContext';
-import { Mail, Lock, ArrowRight, Award, AlertCircle, Search, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, ArrowRight, AlertCircle, Search, Eye, EyeOff } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface LoginPageProps {
   onGoToVerify: () => void;
@@ -55,15 +56,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       
       {/* Top Brand Header */}
       <div className="max-w-6xl w-full mx-auto flex items-center justify-between py-2">
-        <div className="flex items-center space-x-2.5">
-          <div className="flex items-center space-x-1 select-none">
-            <span className="text-2xl sm:text-3xl font-bold text-[#4285F4]">G</span>
-            <span className="text-2xl sm:text-3xl font-bold text-[#EA4335]">o</span>
-            <span className="text-2xl sm:text-3xl font-bold text-[#FBBC05]">o</span>
-            <span className="text-2xl sm:text-3xl font-bold text-[#4285F4]">g</span>
-            <span className="text-2xl sm:text-3xl font-bold text-[#34A853]">l</span>
-            <span className="text-2xl sm:text-3xl font-bold text-[#EA4335]">e</span>
-          </div>
+        <div className="flex items-center space-x-3">
+          <BrandLogo size="md" />
           <div className="h-5 w-[1px] bg-gray-300" />
           <span className="text-xs sm:text-sm font-semibold text-gray-700">
             Campus Ambassador System
@@ -88,8 +82,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Heading */}
           <div className="text-center space-y-1">
-            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-2 border border-blue-100 shadow-2xs">
-              <Award className="w-6 h-6" />
+            <div className="flex justify-center mb-2">
+              <BrandLogo size="lg" />
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
               Campus Ambassador System

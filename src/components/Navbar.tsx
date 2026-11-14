@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { LogOut, Shield, User, Search, Award } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface NavbarProps {
   onGoToVerify: () => void;
@@ -23,15 +24,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onGoToVerify }) => {
         
         {/* Brand */}
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1 select-none">
-            <span className="text-2xl font-bold text-[#4285F4]">G</span>
-            <span className="text-2xl font-bold text-[#EA4335]">o</span>
-            <span className="text-2xl font-bold text-[#FBBC05]">o</span>
-            <span className="text-2xl font-bold text-[#4285F4]">g</span>
-            <span className="text-2xl font-bold text-[#34A853]">l</span>
-            <span className="text-2xl font-bold text-[#EA4335]">e</span>
-          </div>
-          <div className="h-4 w-[1px] bg-gray-300" />
+          <BrandLogo size="md" />
+          <div className="h-5 w-[1px] bg-gray-300" />
           <div className="flex flex-col">
             <span className="text-xs sm:text-sm font-bold text-gray-900 leading-tight">
               Campus Ambassador System

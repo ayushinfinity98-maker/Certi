@@ -4,6 +4,7 @@ import { getCertificateForVerification } from '../services/dataService';
 import { ShieldCheck, ShieldAlert, Award, Calendar, School, User, Search, ArrowLeft, Download, CheckCircle2 } from 'lucide-react';
 import { downloadCertificatePdf } from '../utils/certificatePdf';
 import { CertificateTemplate } from './CertificateTemplate';
+import { BrandLogo } from './BrandLogo';
 
 interface VerificationPageProps {
   initialCertId?: string;
@@ -52,15 +53,8 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 py-3 sm:px-6 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="flex items-center space-x-1 select-none">
-              <span className="text-2xl font-bold text-[#4285F4]">G</span>
-              <span className="text-2xl font-bold text-[#EA4335]">o</span>
-              <span className="text-2xl font-bold text-[#FBBC05]">o</span>
-              <span className="text-2xl font-bold text-[#4285F4]">g</span>
-              <span className="text-2xl font-bold text-[#34A853]">l</span>
-              <span className="text-2xl font-bold text-[#EA4335]">e</span>
-            </div>
-            <div className="h-4 w-[1px] bg-gray-300" />
+            <BrandLogo size="md" />
+            <div className="h-5 w-[1px] bg-gray-300" />
             <span className="text-xs sm:text-sm font-semibold text-gray-700">
               Certificate Verification Portal
             </span>

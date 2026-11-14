@@ -1,5 +1,6 @@
 import React from 'react';
-import { ArrowLeft, Award, FileText } from 'lucide-react';
+import { ArrowLeft, FileText } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface TermsOfServicePageProps {
   onNavigateHome: () => void;
@@ -23,9 +24,7 @@ export const TermsOfServicePage: React.FC<TermsOfServicePageProps> = ({
             }}
             className="flex items-center space-x-2.5 text-gray-900 hover:opacity-80 transition"
           >
-            <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100">
-              <Award className="w-4 h-4" />
-            </div>
+            <BrandLogo size="sm" />
             <span className="text-sm sm:text-base font-bold tracking-tight">
               Campus Ambassador System
             </span>

@@ -21,9 +21,12 @@ import {
   ExternalLink,
   ShieldCheck,
   Shield,
-  School
+  School,
+  Crown,
+  FileText,
+  Sliders
 } from 'lucide-react';
-import { Student, CampusAmbassador, Certificate, EmailLog } from '../types';
+import { Student, CampusAmbassador, Certificate, EmailLog, CaRegistrationForm, FormSubmission } from '../types';
 import { 
   getStudentsForCA, 
   addStudent, 
@@ -40,6 +43,13 @@ import { CsvImportModal } from './CsvImportModal';
 import { BulkIssuanceModal } from './BulkIssuanceModal';
 import { CertificateTemplate } from './CertificateTemplate';
 import { SendEmailModal } from './SendEmailModal';
+import { MainCaFormBuilder } from './MainCaFormBuilder';
+import { PlaceholderRoleManager } from './PlaceholderRoleManager';
+import {
+  importFormSubmissionToStudent,
+  subscribeToFormsForCA,
+  subscribeToFormSubmissionsForCA
+} from '../services/formService';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { retryEmailDispatch } from '../services/emailService';
@@ -51,14 +61,26 @@ interface CaDashboardProps {
 
 export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEmail }) => {
   const [ca, setCa] = useState<CampusAmbassador>(initialCa);
+  const [activeSubTab, setActiveSubTab] = useState<'students' | 'forms' | 'placeholders'>('students');
   const [students, setStudents] = useState<Student[]>([]);
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
+  const [caForms, setCaForms] = useState<CaRegistrationForm[]>([]);
+  const [formSubmissions, setFormSubmissions] = useState<FormSubmission[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const autoSyncedSubmissionIdsRef = React.useRef<Set<string>>(new Set());
+
+  const isMainCa = ca.caRole === 'main_ca';
 
   useEffect(() => {
     setCa(initialCa);
   }, [initialCa]);
+
+  useEffect(() => {
+    if (!isMainCa && activeSubTab !== 'students') {
+      setActiveSubTab('students');
+    }
+  }, [isMainCa, activeSubTab]);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,11 +120,38 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
       setIsLoading(false);
     });
 
+    // Attach Main CA forms & submissions listeners so auto-import runs immediately even on Students tab
+    const unsubForms = subscribeToFormsForCA(initialCa.uid, setCaForms);
+    const unsubSubs = subscribeToFormSubmissionsForCA(initialCa.uid, setFormSubmissions);
+
     return () => {
       unsubProfile();
       unsubscribe();
+      unsubForms();
+      unsubSubs();
     };
   }, [initialCa.uid]);
+
+  useEffect(() => {
+    if (!isMainCa || formSubmissions.length === 0) return;
+    const formMap = new Map(caForms.map(f => [f.id, f]));
+    const pendingToImport = formSubmissions.filter(sub => {
+      if (sub.status !== 'pending') return false;
+      if (autoSyncedSubmissionIdsRef.current.has(sub.id)) return false;
+      const parentForm = formMap.get(sub.formId);
+      return parentForm ? parentForm.autoAddStudent !== false : true;
+    });
+    if (pendingToImport.length === 0) return;
+
+    pendingToImport.forEach(async (sub) => {
+      autoSyncedSubmissionIdsRef.current.add(sub.id);
+      try {
+        await importFormSubmissionToStudent(sub, actorEmail);
+      } catch (err) {
+        console.warn('CaDashboard auto-import submission notice:', err);
+      }
+    });
+  }, [isMainCa, caForms, formSubmissions, actorEmail]);
 
   const handleSaveStudent = async (data: any) => {
     if (editingStudent) {
@@ -193,6 +242,7 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
   const totalPending = students.filter(s => s.certificateStatus === 'not_issued').length;
   const emailsDelivered = emailLogs.filter(l => l.status === 'delivered' || l.status === 'sent').length;
   const emailsFailed = emailLogs.filter(l => l.status === 'failed').length;
+  const pendingFormResponsesCount = formSubmissions.filter(s => s.status === 'pending').length;
 
   return (
     <div className="space-y-6">
@@ -204,11 +254,17 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
             {ca.name.charAt(0)}
           </div>
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
               <h2 className="text-lg font-bold text-gray-900">{ca.name}</h2>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
                 {ca.caId}
               </span>
+              {isMainCa && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200 flex items-center">
+                  <Crown className="w-3 h-3 mr-1 text-purple-600" />
+                  Main CA
+                </span>
+              )}
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
                 Active Ambassador
@@ -316,8 +372,72 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
         </div>
       </div>
 
-      {/* Main Student Management Section */}
-      <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs space-y-4 p-5">
+      {/* Main CA Role Sub-Tabs (Main CA > CA) */}
+      {isMainCa && (
+        <div className="flex items-center flex-wrap gap-2 border-b border-gray-200 pb-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('students')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+              activeSubTab === 'students'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Students &amp; Certificates</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('forms')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+              activeSubTab === 'forms'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Student Forms &amp; Share Links ({caForms.length})</span>
+            {pendingFormResponsesCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-300 text-amber-950">
+                {pendingFormResponsesCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('placeholders')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+              activeSubTab === 'placeholders'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+            <span>Certificate Info &amp; Placeholder Roles</span>
+          </button>
+        </div>
+      )}
+
+      {isMainCa && activeSubTab === 'forms' ? (
+        <MainCaFormBuilder
+          ca={ca}
+          actorUid={ca.uid}
+          actorEmail={actorEmail}
+          actorRole="ca"
+        />
+      ) : isMainCa && activeSubTab === 'placeholders' ? (
+        <PlaceholderRoleManager
+          ca={ca}
+          actorUid={ca.uid}
+          actorEmail={actorEmail}
+          actorRole="main_ca"
+        />
+      ) : (
+        /* Main Student Management Section */
+        <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs space-y-4 p-5">
         
         {/* Controls Toolbar */}
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -472,6 +592,18 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
                       <td className="py-3 px-3">
                         <span className="font-bold text-gray-900">{student.fullName}</span>
                         <span className="text-[10px] text-gray-400 block">{student.college}</span>
+                        {student.customFields && Object.keys(student.customFields).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {Object.entries(student.customFields).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px]"
+                              >
+                                <span className="font-mono font-bold">{k}:</span> {v}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3 px-3 font-mono text-[11px] text-gray-600">
@@ -570,6 +702,7 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEm
         </div>
 
       </div>
+      )}
 
       {/* Send Email Modal */}
       {emailingStudent && (

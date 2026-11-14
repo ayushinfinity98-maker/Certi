@@ -3,6 +3,9 @@ import jsPDF from 'jspdf';
 import { Certificate, CertificateTemplateConfig, CertificateCustomElement } from '../types';
 import {
   getActiveCertificateTemplate,
+  getCertificateFieldConfig,
+  getOverlayPlaceholderElements,
+  isPlaceholderEnabled,
   populateCertificatePlaceholders,
   resolvePlaceholderValue,
   isSignaturePlaceholderTag,
@@ -45,8 +48,12 @@ export async function renderCertificateToCanvas(
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not get 2d context');
 
-  // Load active template
-  const tpl = await getActiveCertificateTemplate().catch(() => null);
+  // Load active template and Main CA / Admin placeholder role config
+  const [tpl, fieldConfig] = await Promise.all([
+    getActiveCertificateTemplate().catch(() => null),
+    getCertificateFieldConfig().catch(() => null)
+  ]);
+  const fieldRoles = fieldConfig?.roles;
 
   // Background (solid color copied from Google Slide or white default)
   ctx.fillStyle = tpl?.backgroundColor || '#FFFFFF';
@@ -69,9 +76,12 @@ export async function renderCertificateToCanvas(
   }
 
   const isManualMode = tpl?.elementsMode === 'manual_placed' || tpl?.type === 'blank_plain';
+  const combinedManualElements = tpl
+    ? [...(tpl.customElements || []), ...getOverlayPlaceholderElements(tpl, fieldRoles)]
+    : [];
 
   // If in manual mode with placed custom elements:
-  if (isManualMode && tpl?.customElements && tpl.customElements.length > 0) {
+  if (isManualMode && combinedManualElements.length > 0) {
     const values: CertificatePlaceholderValues = {
       student_name: cert.studentName,
       initiative_name: cert.initiativeName,
@@ -79,10 +89,23 @@ export async function renderCertificateToCanvas(
       semester: cert.semester,
       participation_date: cert.participationDate,
       certificate_id: cert.certificateId,
-      ca_name: cert.caName
+      ca_name: cert.caName,
+      ca_id: cert.caId,
+      program_name: cert.programName,
+      customFields: cert.customFields
     };
 
-    for (const el of tpl.customElements) {
+    for (const el of combinedManualElements) {
+      if (el.type === 'placeholder' && !isPlaceholderEnabled(el.placeholderTag, fieldRoles)) {
+        continue;
+      }
+      if (el.type === 'qr' && !isPlaceholderEnabled('qr', fieldRoles)) {
+        continue;
+      }
+      if (el.type === 'signature' && !isPlaceholderEnabled('sign', fieldRoles)) {
+        continue;
+      }
+
       const elX = (el.x / 100) * width;
       const elY = (el.y / 100) * height;
       const scale = 2.4; // scaling factor for 2400x1696 canvas relative to preview
@@ -91,8 +114,8 @@ export async function renderCertificateToCanvas(
       ctx.save();
       ctx.textAlign = el.textAlign || 'center';
 
-      const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag);
-      const isQrPlaceholder = el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag);
+      const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, fieldRoles);
+      const isQrPlaceholder = el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag, fieldRoles);
 
       if (isSigPlaceholder) {
         if (cert.signatureUrl) {
@@ -114,8 +137,8 @@ export async function renderCertificateToCanvas(
         }
       } else if ((el.type === 'placeholder' && !isQrPlaceholder) || el.type === 'text') {
         const textToDraw = el.type === 'placeholder'
-          ? (resolvePlaceholderValue(el.placeholderTag, values) ?? `{{${el.placeholderTag}}}`)
-          : populateCertificatePlaceholders(el.customText || '', values);
+          ? (resolvePlaceholderValue(el.placeholderTag, values, fieldRoles) ?? `{{${el.placeholderTag}}}`)
+          : populateCertificatePlaceholders(el.customText || '', values, fieldRoles);
 
         const fontFam = el.customFontName
           ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
@@ -298,30 +321,38 @@ export async function renderCertificateToCanvas(
   ctx.fillStyle = '#5F6368';
   ctx.fillText(tpl?.presentationText || 'This certificate is proudly and honorably presented to', width / 2, 480);
 
-  // STUDENT NAME
-  ctx.font = 'bold 84px "Playfair Display", Georgia, serif';
-  ctx.fillStyle = '#1A73E8';
-  ctx.fillText(cert.studentName, width / 2, 590);
-
-  const nameWidth = ctx.measureText(cert.studentName).width;
-  ctx.strokeStyle = '#FBBC05';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.moveTo((width / 2) - (nameWidth / 2) - 30, 620);
-  ctx.lineTo((width / 2) + (nameWidth / 2) + 30, 620);
-  ctx.stroke();
-
-  // DYNAMIC BODY TEXT with placeholders
-  const rawBody = tpl?.bodyText || 'for active and exemplary participation in "{{initiative_name}}" organized by the Google Student Ambassador Program 2026 at {{college_name}} ({{semester}}).';
-  const populatedBody = populateCertificatePlaceholders(rawBody, {
+  const autoValues: CertificatePlaceholderValues = {
     student_name: cert.studentName,
     initiative_name: cert.initiativeName,
     college_name: cert.college,
     semester: cert.semester,
     participation_date: cert.participationDate,
     certificate_id: cert.certificateId,
-    ca_name: cert.caName
-  });
+    ca_name: cert.caName,
+    ca_id: cert.caId,
+    program_name: cert.programName,
+    customFields: cert.customFields
+  };
+
+  // STUDENT NAME
+  if (isPlaceholderEnabled('name', fieldRoles)) {
+    const resolvedStudentName = resolvePlaceholderValue('name', autoValues, fieldRoles) || cert.studentName;
+    ctx.font = 'bold 84px "Playfair Display", Georgia, serif';
+    ctx.fillStyle = '#1A73E8';
+    ctx.fillText(resolvedStudentName, width / 2, 590);
+
+    const nameWidth = ctx.measureText(resolvedStudentName).width;
+    ctx.strokeStyle = '#FBBC05';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo((width / 2) - (nameWidth / 2) - 30, 620);
+    ctx.lineTo((width / 2) + (nameWidth / 2) + 30, 620);
+    ctx.stroke();
+  }
+
+  // DYNAMIC BODY TEXT with placeholders
+  const rawBody = tpl?.bodyText || 'for active and exemplary participation in "{{initiative_name}}" organized by the Google Student Ambassador Program 2026 at {{college_name}} ({{semester}}).';
+  const populatedBody = populateCertificatePlaceholders(rawBody, autoValues, fieldRoles);
 
   ctx.font = '400 34px "Google Sans", Inter, sans-serif';
   ctx.fillStyle = '#3C4043';
@@ -353,28 +384,34 @@ export async function renderCertificateToCanvas(
 
   ctx.save();
   ctx.textAlign = 'left';
-  ctx.font = '600 24px "Google Sans", Inter, sans-serif';
-  ctx.fillStyle = '#5F6368';
-  ctx.fillText('PARTICIPATION DATE', 140, bottomY);
+  if (isPlaceholderEnabled('date', fieldRoles)) {
+    const resolvedDate = resolvePlaceholderValue('date', autoValues, fieldRoles) || cert.participationDate;
+    ctx.font = '600 24px "Google Sans", Inter, sans-serif';
+    ctx.fillStyle = '#5F6368';
+    ctx.fillText('PARTICIPATION DATE', 140, bottomY);
 
-  ctx.font = 'bold 34px "Google Sans", Inter, sans-serif';
-  ctx.fillStyle = '#202124';
-  ctx.fillText(cert.participationDate, 140, bottomY + 45);
+    ctx.font = 'bold 34px "Google Sans", Inter, sans-serif';
+    ctx.fillStyle = '#202124';
+    ctx.fillText(resolvedDate, 140, bottomY + 45);
 
-  ctx.strokeStyle = '#9AA0A6';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(140, bottomY + 65);
-  ctx.lineTo(440, bottomY + 65);
-  ctx.stroke();
+    ctx.strokeStyle = '#9AA0A6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(140, bottomY + 65);
+    ctx.lineTo(440, bottomY + 65);
+    ctx.stroke();
+  }
 
   ctx.font = '500 20px "Google Sans", Inter, sans-serif';
   ctx.fillStyle = '#5F6368';
   ctx.fillText(tpl?.footerNote || 'Official Program Issuance', 140, bottomY + 95);
-  ctx.fillText(`Initiative: ${cert.initiativeName.substring(0, 32)}`, 140, bottomY + 125);
+  if (isPlaceholderEnabled('event', fieldRoles)) {
+    const resolvedEvent = resolvePlaceholderValue('event', autoValues, fieldRoles) || cert.initiativeName;
+    ctx.fillText(`Initiative: ${resolvedEvent.substring(0, 32)}`, 140, bottomY + 125);
+  }
   ctx.restore();
 
-  if (tpl?.showQrCode !== false) {
+  if (tpl?.showQrCode !== false && isPlaceholderEnabled('qr', fieldRoles)) {
     ctx.save();
     ctx.textAlign = 'center';
     const qrImg = new Image();
@@ -389,9 +426,12 @@ export async function renderCertificateToCanvas(
     const qrY = bottomY - 60;
     ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
 
-    ctx.font = 'bold 22px "Google Sans", monospace';
-    ctx.fillStyle = '#1A73E8';
-    ctx.fillText(`ID: ${cert.certificateId}`, width / 2, qrY + qrSize + 30);
+    if (isPlaceholderEnabled('certificate_id', fieldRoles)) {
+      const resolvedCertId = resolvePlaceholderValue('certificate_id', autoValues, fieldRoles) || cert.certificateId;
+      ctx.font = 'bold 22px "Google Sans", monospace';
+      ctx.fillStyle = '#1A73E8';
+      ctx.fillText(`ID: ${resolvedCertId}`, width / 2, qrY + qrSize + 30);
+    }
 
     ctx.font = '500 18px "Google Sans", Inter, sans-serif';
     ctx.fillStyle = '#5F6368';
@@ -399,7 +439,7 @@ export async function renderCertificateToCanvas(
     ctx.restore();
   }
 
-  if (tpl?.showSignature !== false) {
+  if (tpl?.showSignature !== false && isPlaceholderEnabled('sign', fieldRoles)) {
     ctx.save();
     const sigX = width - 560;
     const sigWidth = 420;
@@ -428,9 +468,12 @@ export async function renderCertificateToCanvas(
     ctx.stroke();
 
     ctx.textAlign = 'center';
-    ctx.font = 'bold 30px "Google Sans", Inter, sans-serif';
-    ctx.fillStyle = '#202124';
-    ctx.fillText(cert.caName, sigX + (sigWidth / 2), bottomY + 105);
+    if (isPlaceholderEnabled('CA Name', fieldRoles)) {
+      const resolvedCaName = resolvePlaceholderValue('CA Name', autoValues, fieldRoles) || cert.caName;
+      ctx.font = 'bold 30px "Google Sans", Inter, sans-serif';
+      ctx.fillStyle = '#202124';
+      ctx.fillText(resolvedCaName, sigX + (sigWidth / 2), bottomY + 105);
+    }
 
     ctx.font = '600 20px "Google Sans", Inter, sans-serif';
     ctx.fillStyle = '#1A73E8';

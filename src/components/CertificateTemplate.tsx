@@ -1,14 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { Certificate, CertificateTemplateConfig } from '../types';
+import { Certificate, CertificateTemplateConfig, PlaceholderRoleConfig } from '../types';
 import { generateVerificationQr, downloadCertificatePdf } from '../utils/certificatePdf';
-import { Download, Share2, CheckCircle2, ShieldCheck, ExternalLink, Printer } from 'lucide-react';
+import { Download, Share2, ShieldCheck, Printer } from 'lucide-react';
 import {
   getActiveCertificateTemplate,
   subscribeToActiveCertificateTemplate,
+  getCertificateFieldConfig,
+  subscribeToCertificateFieldConfig,
   populateCertificatePlaceholders,
   resolvePlaceholderValue,
+  isPlaceholderEnabled,
   isSignaturePlaceholderTag,
   isQrPlaceholderTag,
+  getOverlayPlaceholderElements,
+  DEFAULT_PLACEHOLDER_ROLES,
   DEFAULT_TEMPLATES
 } from '../services/certificateTemplateService';
 
@@ -27,14 +32,22 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
   const [isDownloading, setIsDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [template, setTemplate] = useState<CertificateTemplateConfig>(DEFAULT_TEMPLATES[0]);
+  const [fieldRoles, setFieldRoles] = useState<PlaceholderRoleConfig[]>(DEFAULT_PLACEHOLDER_ROLES);
 
   useEffect(() => {
     generateVerificationQr(certificate.certificateId).then(setQrCodeUrl);
     getActiveCertificateTemplate().then(setTemplate).catch(() => setTemplate(DEFAULT_TEMPLATES[0]));
-    const unsub = subscribeToActiveCertificateTemplate((latest) => {
+    getCertificateFieldConfig().then(cfg => setFieldRoles(cfg.roles)).catch(() => {});
+    const unsubTpl = subscribeToActiveCertificateTemplate((latest) => {
       setTemplate(latest);
     });
-    return () => unsub();
+    const unsubMap = subscribeToCertificateFieldConfig((cfg) => {
+      setFieldRoles(cfg.roles);
+    });
+    return () => {
+      unsubTpl();
+      unsubMap();
+    };
   }, [certificate.certificateId]);
 
   const handleDownload = async () => {
@@ -67,10 +80,17 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
     semester: certificate.semester,
     participation_date: certificate.participationDate,
     certificate_id: certificate.certificateId,
-    ca_name: certificate.caName
+    ca_name: certificate.caName,
+    ca_id: certificate.caId,
+    program_name: certificate.programName,
+    customFields: certificate.customFields
   };
 
   const isManualMode = template.elementsMode === 'manual_placed' || template.type === 'blank_plain';
+  const combinedManualElements = [
+    ...(template.customElements || []),
+    ...getOverlayPlaceholderElements(template, fieldRoles)
+  ];
 
   return (
     <div className="flex flex-col items-center">
@@ -191,35 +211,41 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                 {template.presentationText || 'This certificate is proudly and honorably presented to'}
               </p>
 
-              <div className="py-2">
-                <h2 className="text-2xl sm:text-4xl font-serif font-bold text-blue-700 tracking-tight">
-                  {certificate.studentName}
-                </h2>
-                <div className="w-32 sm:w-48 h-0.5 bg-yellow-400 mx-auto mt-2 rounded-full" />
-              </div>
+              {isPlaceholderEnabled('name', fieldRoles) && (
+                <div className="py-2">
+                  <h2 className="text-2xl sm:text-4xl font-serif font-bold text-blue-700 tracking-tight">
+                    {resolvePlaceholderValue('name', sampleValues, fieldRoles) || certificate.studentName}
+                  </h2>
+                  <div className="w-32 sm:w-48 h-0.5 bg-yellow-400 mx-auto mt-2 rounded-full" />
+                </div>
+              )}
 
               <p className="text-xs sm:text-sm text-gray-700 max-w-xl mx-auto leading-relaxed">
-                {populateCertificatePlaceholders(template.bodyText || '', sampleValues)}
+                {populateCertificatePlaceholders(template.bodyText || '', sampleValues, fieldRoles)}
               </p>
             </div>
 
             {/* Bottom Footer Section */}
             <div className="grid grid-cols-3 items-end pt-4 border-t border-gray-100 mt-2">
               <div className="text-left space-y-1">
-                <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
-                  Participation Date
-                </span>
-                <p className="text-xs sm:text-sm font-semibold text-gray-800">
-                  {certificate.participationDate}
-                </p>
-                <div className="w-24 sm:w-32 h-[1px] bg-gray-300 mt-1" />
+                {isPlaceholderEnabled('date', fieldRoles) && (
+                  <>
+                    <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
+                      Participation Date
+                    </span>
+                    <p className="text-xs sm:text-sm font-semibold text-gray-800">
+                      {resolvePlaceholderValue('date', sampleValues, fieldRoles) || certificate.participationDate}
+                    </p>
+                    <div className="w-24 sm:w-32 h-[1px] bg-gray-300 mt-1" />
+                  </>
+                )}
                 <p className="text-[8px] sm:text-[9px] text-gray-500">
                   {template.footerNote || 'Official Program Issuance'}
                 </p>
               </div>
 
               <div className="flex flex-col items-center text-center">
-                {template.showQrCode && (
+                {template.showQrCode && isPlaceholderEnabled('qr', fieldRoles) && (
                   <>
                     {qrCodeUrl ? (
                       <img
@@ -230,15 +256,17 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                     ) : (
                       <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 animate-pulse rounded" />
                     )}
-                    <span className="text-[8px] sm:text-[10px] font-mono font-bold text-blue-600 mt-1">
-                      {certificate.certificateId}
-                    </span>
+                    {isPlaceholderEnabled('certificate_id', fieldRoles) && (
+                      <span className="text-[8px] sm:text-[10px] font-mono font-bold text-blue-600 mt-1">
+                        {resolvePlaceholderValue('certificate_id', sampleValues, fieldRoles) || certificate.certificateId}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
 
               <div className="text-right flex flex-col items-end space-y-1">
-                {template.showSignature && (
+                {template.showSignature && isPlaceholderEnabled('sign', fieldRoles) && (
                   <>
                     <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
                       Authorized Signature
@@ -257,9 +285,11 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                       )}
                     </div>
                     <div className="w-28 sm:w-40 h-[1px] bg-gray-300" />
-                    <p className="text-xs sm:text-sm font-bold text-gray-800">
-                      {certificate.caName}
-                    </p>
+                    {isPlaceholderEnabled('CA Name', fieldRoles) && (
+                      <p className="text-xs sm:text-sm font-bold text-gray-800">
+                        {resolvePlaceholderValue('CA Name', sampleValues, fieldRoles) || certificate.caName}
+                      </p>
+                    )}
                     <p className="text-[8px] sm:text-[10px] font-semibold text-blue-600">
                       {template.signatureTitle || 'Campus Ambassador'} ({certificate.caId})
                     </p>
@@ -272,7 +302,17 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
         ) : (
           /* MANUAL PLACED ELEMENTS ONLY - Pure clean design with exact coordinates */
           <div className="relative z-10 w-full h-full">
-            {(template.customElements || []).map(el => {
+            {combinedManualElements.map(el => {
+              if (el.type === 'placeholder' && !isPlaceholderEnabled(el.placeholderTag, fieldRoles)) {
+                return null;
+              }
+              if (el.type === 'qr' && !isPlaceholderEnabled('qr', fieldRoles)) {
+                return null;
+              }
+              if (el.type === 'signature' && !isPlaceholderEnabled('sign', fieldRoles)) {
+                return null;
+              }
+
               let content: React.ReactNode = null;
 
               const resolvedFont = el.customFontName
@@ -283,7 +323,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                 ? 'monospace'
                 : 'sans-serif';
 
-              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag)) {
+              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, fieldRoles)) {
                 content = (
                   <div className="flex flex-col items-center">
                     {certificate.signatureUrl ? (
@@ -305,8 +345,8 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                     )}
                   </div>
                 );
-              } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag)) {
-                const val = resolvePlaceholderValue(el.placeholderTag, sampleValues) ?? `{{${el.placeholderTag}}}`;
+              } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag, fieldRoles)) {
+                const val = resolvePlaceholderValue(el.placeholderTag, sampleValues, fieldRoles) ?? `{{${el.placeholderTag}}}`;
                 content = (
                   <span
                     style={{
@@ -329,7 +369,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                       fontFamily: resolvedFont
                     }}
                   >
-                    {populateCertificatePlaceholders(el.customText || '', sampleValues)}
+                    {populateCertificatePlaceholders(el.customText || '', sampleValues, fieldRoles)}
                   </span>
                 );
               } else if (el.type === 'image' && el.customText) {
@@ -344,7 +384,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                     }}
                   />
                 );
-              } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag))) {
+              } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag, fieldRoles))) {
                 content = (
                   <div className="flex flex-col items-center">
                     {qrCodeUrl ? (

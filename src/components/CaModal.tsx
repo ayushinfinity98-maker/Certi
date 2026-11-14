@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { CampusAmbassador, AmbassadorPermissions } from '../types';
-import { X, UserCheck, Key, Shield, AlertCircle, Sparkles, CheckSquare, Square, Chrome } from 'lucide-react';
+import { CampusAmbassador, AmbassadorPermissions, CaTierRole } from '../types';
+import { X, UserCheck, Key, Shield, AlertCircle, Sparkles, Chrome, Crown } from 'lucide-react';
 import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
 
 interface CaModalProps {
@@ -25,6 +25,7 @@ export const CaModal: React.FC<CaModalProps> = ({
   const [caId, setCaId] = useState('');
   const [initialPassword, setInitialPassword] = useState('');
   const [status, setStatus] = useState<'active' | 'deactivated' | 'suspended'>('active');
+  const [caRole, setCaRole] = useState<CaTierRole>('ca');
   const [allowGoogleLogin, setAllowGoogleLogin] = useState(true);
   const [googleEmail, setGoogleEmail] = useState('');
 
@@ -46,6 +47,7 @@ export const CaModal: React.FC<CaModalProps> = ({
       setCaId(ca.caId);
       setInitialPassword(ca.initialPassword || '');
       setStatus(ca.status);
+      setCaRole(ca.caRole || 'ca');
       setAllowGoogleLogin(ca.allowGoogleLogin !== false);
       setGoogleEmail(ca.googleEmail || ca.email || '');
 
@@ -69,6 +71,7 @@ export const CaModal: React.FC<CaModalProps> = ({
       const randStr = Math.random().toString(36).substring(2, 6).toUpperCase();
       setInitialPassword(`Ambassador@${randStr}26`);
       setStatus('active');
+      setCaRole('ca');
       setAllowGoogleLogin(true);
       setGoogleEmail('');
       setCanIssueCertificates(true);
@@ -126,6 +129,7 @@ export const CaModal: React.FC<CaModalProps> = ({
         allowGoogleLogin,
         googleEmail: (googleEmail.trim() || email.trim()).toLowerCase(),
         permissions,
+        caRole,
         status,
         signatureUrl: defaultSig,
         signatureUpdatedAt: ca?.signatureUpdatedAt || new Date().toISOString()
@@ -386,6 +390,62 @@ export const CaModal: React.FC<CaModalProps> = ({
                 <div>
                   <span className="text-xs font-bold text-gray-900 block">Automated Email Dispatch</span>
                   <span className="text-[10px] text-gray-500 block">Deliver PDF certificates directly to student emails</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Section 3b: Ambassador Tier (Admin > Main CA > CA) */}
+          <div className="p-4 bg-purple-50/50 border border-purple-200/80 rounded-2xl space-y-2.5">
+            <span className="text-[11px] font-bold text-purple-950 uppercase tracking-wider flex items-center">
+              <Crown className="w-3.5 h-3.5 mr-1.5 text-purple-600" />
+              3b. Hierarchy Tier (Admin &gt; Main CA &gt; CA)
+            </span>
+            <p className="text-[11px] text-gray-600">
+              Main CA has elevated control to create shareable public student forms and decide what info &amp; placeholder roles appear on certificates.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <label
+                className={`flex items-start space-x-2.5 cursor-pointer p-2.5 rounded-xl border transition ${
+                  caRole === 'ca'
+                    ? 'bg-white border-blue-500 ring-1 ring-blue-500'
+                    : 'bg-white border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="caRoleTier"
+                  checked={caRole === 'ca'}
+                  onChange={() => setCaRole('ca')}
+                  className="mt-0.5 text-blue-600"
+                />
+                <div>
+                  <span className="text-xs font-bold text-gray-900 block">Standard CA</span>
+                  <span className="text-[10px] text-gray-500 block">
+                    Manages campus students and issues certificates using active rules
+                  </span>
+                </div>
+              </label>
+
+              <label
+                className={`flex items-start space-x-2.5 cursor-pointer p-2.5 rounded-xl border transition ${
+                  caRole === 'main_ca'
+                    ? 'bg-white border-purple-600 ring-1 ring-purple-600'
+                    : 'bg-white border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="caRoleTier"
+                  checked={caRole === 'main_ca'}
+                  onChange={() => setCaRole('main_ca')}
+                  className="mt-0.5 text-purple-600"
+                />
+                <div>
+                  <span className="text-xs font-bold text-purple-900 block">Main CA (Lead)</span>
+                  <span className="text-[10px] text-gray-500 block">
+                    Builds public student forms, picks required info, and maps placeholder jobs
+                  </span>
                 </div>
               </label>
             </div>

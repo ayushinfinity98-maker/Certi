@@ -5,37 +5,44 @@ import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { CaDashboard } from './components/CaDashboard';
 import { VerificationPage } from './components/VerificationPage';
+import { PublicStudentFormPage } from './components/PublicStudentFormPage';
 import { PrivacyPolicyPage } from './components/PrivacyPolicyPage';
 import { TermsOfServicePage } from './components/TermsOfServicePage';
 import { BrandLogo } from './components/BrandLogo';
 import { ShieldAlert, LogOut } from 'lucide-react';
 
-type PublicView = 'app' | 'verify' | 'privacy' | 'terms';
+type PublicView = 'app' | 'verify' | 'form' | 'privacy' | 'terms';
 
-function resolveRouteFromLocation(): { view: PublicView; certId: string } {
+function resolveRouteFromLocation(): { view: PublicView; certId: string; formId: string } {
   if (typeof window === 'undefined') {
-    return { view: 'app', certId: '' };
+    return { view: 'app', certId: '', formId: '' };
   }
   const urlParams = new URLSearchParams(window.location.search);
   const verifyParam = urlParams.get('verify');
   const rawPath = window.location.pathname.replace(/\/+$/, '') || '/';
 
   if (rawPath === '/privacy') {
-    return { view: 'privacy', certId: '' };
+    return { view: 'privacy', certId: '', formId: '' };
   }
   if (rawPath === '/terms') {
-    return { view: 'terms', certId: '' };
+    return { view: 'terms', certId: '', formId: '' };
+  }
+  if (rawPath.startsWith('/form/')) {
+    const idFromPath = rawPath.replace('/form/', '');
+    if (idFromPath) {
+      return { view: 'form', certId: '', formId: idFromPath };
+    }
   }
   if (verifyParam) {
-    return { view: 'verify', certId: verifyParam };
+    return { view: 'verify', certId: verifyParam, formId: '' };
   }
   if (rawPath.startsWith('/verify/')) {
     const idFromPath = rawPath.replace('/verify/', '');
     if (idFromPath) {
-      return { view: 'verify', certId: idFromPath };
+      return { view: 'verify', certId: idFromPath, formId: '' };
     }
   }
-  return { view: 'app', certId: '' };
+  return { view: 'app', certId: '', formId: '' };
 }
 
 function AppContent() {
@@ -43,6 +50,7 @@ function AppContent() {
   const initialRoute = resolveRouteFromLocation();
   const [currentView, setCurrentView] = useState<PublicView>(initialRoute.view);
   const [verificationCertId, setVerificationCertId] = useState<string>(initialRoute.certId);
+  const [publicFormId, setPublicFormId] = useState<string>(initialRoute.formId);
 
   const navigateTo = (path: string, view: PublicView) => {
     setCurrentView(view);
@@ -54,12 +62,13 @@ function AppContent() {
     }
   };
 
-  // Sync URL params and browser back/forward navigation for public routes (/privacy, /terms, /verify/:id)
+  // Sync URL params and browser back/forward navigation for public routes (/privacy, /terms, /verify/:id, /form/:id)
   useEffect(() => {
     const syncFromUrl = () => {
       const next = resolveRouteFromLocation();
       setCurrentView(next.view);
       setVerificationCertId(next.certId);
+      setPublicFormId(next.formId);
     };
     syncFromUrl();
     window.addEventListener('popstate', syncFromUrl);
@@ -80,6 +89,17 @@ function AppContent() {
       <TermsOfServicePage
         onNavigateHome={() => navigateTo('/', 'app')}
         onNavigatePrivacy={() => navigateTo('/privacy', 'privacy')}
+      />
+    );
+  }
+
+  if (currentView === 'form' && publicFormId) {
+    return (
+      <PublicStudentFormPage
+        formId={publicFormId}
+        onBackToApp={() => {
+          navigateTo('/', 'app');
+        }}
       />
     );
   }

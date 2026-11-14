@@ -16,7 +16,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onGoToVerify }) => {
 
   const subText = role === 'superadmin' || role === 'admin'
     ? 'Super Admin Console'
-    : `${caProfile?.college || 'Ambassador'} (${caProfile?.caId || ''})`;
+    : `${caProfile?.caRole === 'main_ca' ? 'Main CA • ' : ''}${caProfile?.college || 'Ambassador'} (${caProfile?.caId || ''})`;
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-2xs">

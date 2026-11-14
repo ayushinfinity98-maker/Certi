@@ -1,4 +1,5 @@
 export type UserRole = 'superadmin' | 'admin' | 'ca';
+export type CaTierRole = 'ca' | 'main_ca';
 
 export interface AdminUser {
   uid: string;
@@ -19,6 +20,7 @@ export interface AmbassadorPermissions {
 export interface CampusAmbassador {
   uid: string;
   caId: string; // e.g. "CA-2026-001"
+  caRole?: CaTierRole; // 'main_ca' | 'ca' (admin > main_ca > ca)
   name: string;
   email: string;
   college: string;
@@ -50,6 +52,9 @@ export interface Student {
   participationDate: string; // YYYY-MM-DD
   certificateStatus: CertificateStatus;
   certificateId?: string;
+  customFields?: Record<string, string>;
+  sourceFormId?: string;
+  submissionId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,6 +74,7 @@ export interface Certificate {
   programName: string; // "Google Student Ambassador Program 2026"
   status: 'valid' | 'revoked';
   verificationUrl: string;
+  customFields?: Record<string, string>;
   issuedAt: string;
 }
 
@@ -165,5 +171,90 @@ export interface CertificateTemplateConfig {
   isActive: boolean;
   updatedBy?: string;
   updatedAt?: string;
+}
+
+export type FormFieldType = 'text' | 'email' | 'tel' | 'date' | 'select' | 'textarea';
+
+export interface CaFormField {
+  id: string;
+  key: string; // e.g. 'fullName', 'email', 'college', 'semester', 'initiativeName', 'participationDate', or custom key like 'roll_no'
+  label: string;
+  type: FormFieldType;
+  required: boolean;
+  enabled: boolean; // When false on a core field, uses defaultValue silently without asking student
+  placeholder?: string;
+  defaultValue?: string;
+  options?: string[];
+  isCore?: boolean;
+  linkedPlaceholderTag?: string;
+}
+
+export interface CaRegistrationForm {
+  id: string;
+  caUid: string;
+  caId: string;
+  caName: string;
+  caCollege: string;
+  title: string;
+  description?: string;
+  isActive: boolean;
+  autoAddStudent: boolean;
+  fields: CaFormField[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  formId: string;
+  formTitle: string;
+  caUid: string;
+  caId: string;
+  fullName: string;
+  email: string;
+  college: string;
+  semester: string;
+  initiativeName: string;
+  participationDate: string;
+  customFields: Record<string, string>;
+  status: 'pending' | 'imported' | 'rejected';
+  importedStudentId?: string;
+  submittedAt: string;
+  importedAt?: string;
+}
+
+export type PlaceholderSourceType =
+  | 'student_field'
+  | 'custom_form_field'
+  | 'ca_field'
+  | 'system_field'
+  | 'static_text';
+
+export interface PlaceholderRoleConfig {
+  tag: string;
+  label: string;
+  enabled: boolean;
+  sourceType: PlaceholderSourceType;
+  sourceKey: string;
+  staticValue?: string;
+  fallbackValue?: string;
+  roleDescription: string;
+  renderOnCanvas?: boolean;
+  x?: number;
+  y?: number;
+  fontSize?: number;
+  color?: string;
+  fontWeight?: 'normal' | '600' | 'bold';
+  fontFamily?: 'serif' | 'sans' | 'mono';
+}
+
+export interface CertificateFieldConfig {
+  id: string; // 'default'
+  roles: PlaceholderRoleConfig[];
+  updatedByUid?: string;
+  updatedByCaUid?: string;
+  updatedByEmail?: string;
+  updatedByRole?: 'admin' | 'main_ca';
+  updatedAt: string;
 }
 

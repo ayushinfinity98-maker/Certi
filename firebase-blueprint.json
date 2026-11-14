@@ -21,6 +21,7 @@
       "properties": {
         "uid": { "type": "string", "description": "Campus Ambassador Firebase Auth UID" },
         "caId": { "type": "string", "pattern": "^[A-Z0-9_-]{3,20}$", "description": "Unique assigned CA identifier" },
+        "caRole": { "type": "string", "enum": ["ca", "main_ca"], "description": "Tier role within CA hierarchy (admin > main_ca > ca)" },
         "name": { "type": "string", "maxLength": 120, "description": "Full name of the Campus Ambassador" },
         "email": { "type": "string", "format": "email", "description": "Official email address" },
         "college": { "type": "string", "maxLength": 150, "description": "College or University name" },
@@ -179,6 +180,58 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last sync timestamp" }
       },
       "required": ["uid", "email"]
+    },
+    "CaForm": {
+      "title": "CaForm",
+      "description": "Public shareable registration form created by a Main CA or Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "caUid": { "type": "string", "maxLength": 128 },
+        "caId": { "type": "string", "maxLength": 32 },
+        "caName": { "type": "string", "maxLength": 120 },
+        "caCollege": { "type": "string", "maxLength": 150 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "isActive": { "type": "boolean" },
+        "autoAddStudent": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "caUid", "caId", "title", "isActive"]
+    },
+    "FormSubmission": {
+      "title": "FormSubmission",
+      "description": "Public student response submitted via a Main CA registration form link",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "formId": { "type": "string", "maxLength": 128 },
+        "formTitle": { "type": "string", "maxLength": 200 },
+        "caUid": { "type": "string", "maxLength": 128 },
+        "caId": { "type": "string", "maxLength": 32 },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "college": { "type": "string", "maxLength": 150 },
+        "semester": { "type": "string", "maxLength": 50 },
+        "initiativeName": { "type": "string", "maxLength": 150 },
+        "participationDate": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["pending", "imported", "rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "formId", "caUid", "fullName", "email", "college", "initiativeName", "participationDate", "status"]
+    },
+    "CertificateMapping": {
+      "title": "CertificateMapping",
+      "description": "Main CA and Admin configured placeholder roles and active certificate fields",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "updatedByCaUid": { "type": "string", "maxLength": 128 },
+        "updatedByRole": { "type": "string", "enum": ["admin", "main_ca"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id"]
     }
   },
   "firestore": {
@@ -205,6 +258,18 @@
     "/certificateTemplates/{templateId}": {
       "schema": "CertificateTemplate",
       "description": "Admin-controlled certificate templates with custom backgrounds and placeholders"
+    },
+    "/certificateMappings/{mappingId}": {
+      "schema": "CertificateMapping",
+      "description": "Main CA and Admin controlled placeholder role assignments and certificate info settings"
+    },
+    "/caForms/{formId}": {
+      "schema": "CaForm",
+      "description": "Shareable student registration forms created by Main CAs"
+    },
+    "/formSubmissions/{submissionId}": {
+      "schema": "FormSubmission",
+      "description": "Student submissions from public Main CA form links"
     },
     "/emailTemplates/{templateId}": {
       "schema": "EmailTemplate",

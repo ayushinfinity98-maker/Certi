@@ -24,7 +24,9 @@ import {
   Check,
   Chrome,
   Send,
-  Trash2
+  Trash2,
+  Crown,
+  Sliders
 } from 'lucide-react';
 import { CampusAmbassador, Certificate, EmailLog, AuditLog, Student } from '../types';
 import { 
@@ -47,6 +49,8 @@ import { SignatureModal } from './SignatureModal';
 import { EmailTemplateManager } from './EmailTemplateManager';
 import { CertificateTemplate } from './CertificateTemplate';
 import { CertificateDesigner } from './CertificateDesigner';
+import { MainCaFormBuilder } from './MainCaFormBuilder';
+import { PlaceholderRoleManager } from './PlaceholderRoleManager';
 import { AuditLogsView } from './AuditLogsView';
 import { checkAndSeedDemoDataIfEmpty } from '../services/seedData';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -64,7 +68,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const { isAdminGmailConnected, connectAdminGmail, isCloudAuthenticated, connectCloudAdminSession } = useAuth();
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'templates' | 'certificates' | 'audit'>('cas');
+  const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'forms_roles' | 'templates' | 'certificates' | 'audit'>('cas');
   const [cas, setCas] = useState<CampusAmbassador[]>([]);
   const [metrics, setMetrics] = useState({
     totalCAs: 0,
@@ -100,6 +104,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     checking: boolean;
     studentCount: number;
     certCount: number;
+    deleteAssociatedRecords: boolean;
     error: string | null;
     isDeleting: boolean;
   } | null>(null);
@@ -173,6 +178,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     await loadData();
   };
 
+  const handleToggleCaTier = async (ca: CampusAmbassador) => {
+    const nextRole = ca.caRole === 'main_ca' ? 'ca' : 'main_ca';
+    await updateCampusAmbassador(ca.uid, { caRole: nextRole }, adminUid, adminEmail);
+    setCloudSyncNotice(
+      `Updated ${ca.name} (${ca.caId}) tier to ${nextRole === 'main_ca' ? 'Main CA (Lead)' : 'Standard CA'}.`
+    );
+    await loadData();
+  };
+
   const handleViewCaStudents = async (ca: CampusAmbassador) => {
     const students = await getStudentsForCA(ca.uid);
     setInspectingCaStudents({ ca, students });
@@ -184,6 +198,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       checking: true,
       studentCount: 0,
       certCount: 0,
+      deleteAssociatedRecords: false,
       error: null,
       isDeleting: false
     });
@@ -206,12 +221,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const handleConfirmDeleteCa = async () => {
     if (!deletingCaState) return;
     const targetCa = deletingCaState.ca;
+    const deleteAssociatedRecords = deletingCaState.deleteAssociatedRecords;
     setDeletingCaState(prev => (prev ? { ...prev, isDeleting: true, error: null } : null));
     try {
-      await deleteCampusAmbassador(targetCa, adminUid, adminEmail);
+      await deleteCampusAmbassador(targetCa, adminUid, adminEmail, { deleteAssociatedRecords });
       setCas(prev => prev.filter(c => c.uid !== targetCa.uid));
       setDeletingCaState(null);
-      setCloudSyncNotice(`Deleted unused Campus Ambassador account ${targetCa.name} (${targetCa.caId}).`);
+      setCloudSyncNotice(
+        `Deleted Campus Ambassador account ${targetCa.name} (${targetCa.caId})${
+          deleteAssociatedRecords ? ' and its associated records' : ''
+        }.`
+      );
       await loadData();
     } catch (err: any) {
       setDeletingCaState(prev =>
@@ -521,7 +541,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       </div>
 
       {/* Tabs Navigation */}
-      <div className="flex items-center space-x-2 border-b border-gray-200 pb-2">
+      <div className="flex items-center flex-wrap gap-2 border-b border-gray-200 pb-2">
         <button
           onClick={() => setActiveTab('cas')}
           className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
@@ -544,6 +564,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
         >
           <Palette className="w-4 h-4" />
           <span>Certificate Templates & Designer</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('forms_roles')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'forms_roles'
+              ? 'bg-purple-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          <span>Forms &amp; Placeholder Roles</span>
         </button>
 
         <button
@@ -667,7 +699,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                     filteredCas.map((ca) => (
                       <tr key={ca.uid} className="hover:bg-gray-50/60 transition">
                         <td className="py-3 px-4">
-                          <div className="font-bold text-gray-900">{ca.name}</div>
+                          <div className="font-bold text-gray-900 flex items-center flex-wrap gap-1.5">
+                            <span>{ca.name}</span>
+                            {ca.caRole === 'main_ca' ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                <Crown className="w-2.5 h-2.5 mr-0.5" />
+                                MAIN CA
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-gray-100 text-gray-600 border border-gray-200">
+                                CA
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[11px] text-gray-500 font-mono">{ca.email}</div>
                           <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
                             {ca.caId}
@@ -783,6 +827,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                               <Edit className="w-3.5 h-3.5" />
                             </button>
                             <button
+                              type="button"
+                              onClick={() => handleToggleCaTier(ca)}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition flex items-center ${
+                                ca.caRole === 'main_ca'
+                                  ? 'border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100'
+                                  : 'border-slate-200 text-slate-600 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200'
+                              }`}
+                              title={ca.caRole === 'main_ca' ? 'Demote to Standard CA' : 'Promote to Main CA'}
+                            >
+                              <Crown className="w-3 h-3 mr-1" />
+                              {ca.caRole === 'main_ca' ? 'Main CA' : 'Set Main CA'}
+                            </button>
+                            <button
                               onClick={() => handleToggleStatus(ca)}
                               className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
                                 ca.status === 'active'
@@ -796,7 +853,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                               type="button"
                               onClick={() => handleOpenDeleteCa(ca)}
                               className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                              title="Delete unused CA account"
+                              title="Delete CA account"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -815,6 +872,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       {/* TAB: Certificate Designer & Custom Templates */}
       {activeTab === 'designer' && (
         <CertificateDesigner adminUid={adminUid} adminEmail={adminEmail} />
+      )}
+
+      {/* TAB: Forms & Placeholder Roles (Admin > Main CA > CA) */}
+      {activeTab === 'forms_roles' && (
+        <div className="space-y-8">
+          <PlaceholderRoleManager
+            actorUid={adminUid}
+            actorEmail={adminEmail}
+            actorRole="admin"
+          />
+          <MainCaFormBuilder
+            ca={
+              cas.find(c => c.caRole === 'main_ca') ||
+              cas[0] || {
+                uid: adminUid,
+                caId: 'ADMIN',
+                caRole: 'main_ca',
+                name: 'Super Admin',
+                email: adminEmail,
+                college: 'Campus Ambassador System',
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }
+            }
+            actorUid={adminUid}
+            actorEmail={adminEmail}
+            actorRole="admin"
+            isAdminMode
+          />
+        </div>
       )}
 
       {/* TAB 2: Email Template Manager */}
@@ -1176,7 +1264,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
         </div>
       )}
 
-      {/* Delete Unused CA Confirmation Modal */}
+      {/* Delete CA Confirmation Modal */}
       {deletingCaState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
@@ -1186,7 +1274,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
               </div>
               <div>
                 <h3 className="text-base font-bold text-gray-900">
-                  Delete Unused CA Account
+                  Delete CA Account
                 </h3>
                 <p className="text-xs text-gray-500">
                   {deletingCaState.ca.name} &bull; <span className="font-mono">{deletingCaState.ca.caId}</span>
@@ -1196,16 +1284,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
 
             {deletingCaState.checking ? (
               <p className="text-xs text-gray-600 py-2">
-                Checking whether this Campus Ambassador has any registered students or issued certificates...
+                Checking this Campus Ambassador&apos;s students and issued certificates...
               </p>
             ) : deletingCaState.studentCount > 0 || deletingCaState.certCount > 0 ? (
-              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1.5">
-                <p className="font-bold">This CA account is currently in use</p>
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2.5">
+                <p className="font-bold">This CA account has active records</p>
                 <p>
                   Found <span className="font-bold">{deletingCaState.studentCount}</span> student(s) and{' '}
-                  <span className="font-bold">{deletingCaState.certCount}</span> issued certificate(s). Only unused CA
-                  accounts can be deleted so existing verification links remain intact. You can Suspend this account instead.
+                  <span className="font-bold">{deletingCaState.certCount}</span> issued certificate(s). Deleting this
+                  CA permanently removes their profile and revokes Google and password login access.
                 </p>
+                <label className="flex items-start space-x-2 pt-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deletingCaState.deleteAssociatedRecords}
+                    onChange={(e) =>
+                      setDeletingCaState(prev =>
+                        prev ? { ...prev, deleteAssociatedRecords: e.target.checked } : null
+                      )
+                    }
+                    className="mt-0.5 rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                  />
+                  <span className="text-[11px] font-semibold text-amber-950">
+                    Also permanently delete this CA&apos;s students, certificates, and email logs
+                    <span className="block font-normal text-amber-800">
+                      Leave unchecked to keep existing public certificate verification links working.
+                    </span>
+                  </span>
+                </label>
               </div>
             ) : (
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-gray-700 space-y-1">
@@ -1221,8 +1327,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
             )}
 
             {!isCloudAuthenticated && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
-                Cloud Admin session is not active. Click "Connect Cloud Admin & Sync CAs" first so Firestore allows deleting this account.
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center justify-between gap-2">
+                <span>
+                  Cloud Admin session is not active. Connect your Super Admin Google session so Firestore allows deleting this account.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => connectCloudAdminSession()}
+                  className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold shrink-0"
+                >
+                  Connect
+                </button>
               </div>
             )}
 
@@ -1242,18 +1357,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                 Cancel
               </button>
 
-              {!deletingCaState.checking &&
-                deletingCaState.studentCount === 0 &&
-                deletingCaState.certCount === 0 && (
-                  <button
-                    type="button"
-                    onClick={handleConfirmDeleteCa}
-                    disabled={deletingCaState.isDeleting || !isCloudAuthenticated}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
-                  >
-                    {deletingCaState.isDeleting ? 'Deleting...' : 'Delete Unused CA'}
-                  </button>
-                )}
+              {!deletingCaState.checking && (
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteCa}
+                  disabled={deletingCaState.isDeleting || !isCloudAuthenticated}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                >
+                  {deletingCaState.isDeleting ? 'Deleting...' : 'Delete CA'}
+                </button>
+              )}
             </div>
           </div>
         </div>

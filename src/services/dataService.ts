@@ -618,6 +618,7 @@ export async function issueCertificateForStudent(
     programName: 'Google Student Ambassador Program 2026',
     status: 'valid',
     verificationUrl,
+    customFields: student.customFields,
     issuedAt: now
   };
 
@@ -1241,23 +1242,37 @@ export async function checkCaUsageForDeletion(caUid: string): Promise<{ studentC
 export async function deleteCampusAmbassador(
   ca: CampusAmbassador,
   adminUid: string,
-  adminEmail: string
+  adminEmail: string,
+  options?: { deleteAssociatedRecords?: boolean }
 ): Promise<void> {
   if (!auth.currentUser || auth.currentUser.email?.toLowerCase().trim() !== 'ayushinfinity98@gmail.com') {
     throw new Error('Please connect your Super Admin Google session (ayushinfinity98@gmail.com) first so Firestore allows deleting CA accounts.');
   }
 
-  const usage = await checkCaUsageForDeletion(ca.uid);
-  if (usage.studentCount > 0 || usage.certCount > 0) {
-    throw new Error(
-      `Cannot delete ${ca.name} (${ca.caId}): account has ${usage.studentCount} student(s) and ${usage.certCount} certificate(s). Only unused CA accounts can be deleted — use Suspend instead.`
-    );
-  }
+  const deleteAssociatedRecords = Boolean(options?.deleteAssociatedRecords);
 
   const cleanCaId = ca.caId ? sanitizeDirectoryKey(ca.caId.toUpperCase()) : '';
   const cleanEmail = ca.email ? sanitizeDirectoryKey(ca.email.toLowerCase()) : '';
   const cleanGoogleEmail = ca.googleEmail ? sanitizeDirectoryKey(ca.googleEmail.toLowerCase()) : '';
   const dirKeys = Array.from(new Set([cleanCaId, cleanEmail, cleanGoogleEmail].filter(Boolean)));
+
+  if (deleteAssociatedRecords) {
+    const [stuSnap, certSnap, logSnap] = await Promise.all([
+      getDocs(query(collection(db, 'students'), where('caUid', '==', ca.uid))),
+      getDocs(query(collection(db, 'certificates'), where('caUid', '==', ca.uid))),
+      getDocs(query(collection(db, 'emailLogs'), where('caUid', '==', ca.uid)))
+    ]);
+
+    await Promise.all([
+      ...stuSnap.docs.map(d => deleteDoc(d.ref)),
+      ...certSnap.docs.map(d => deleteDoc(d.ref)),
+      ...logSnap.docs.map(d => deleteDoc(d.ref))
+    ]);
+
+    saveCache(KEY_STUDENTS, loadCache<Student[]>(KEY_STUDENTS, []).filter(s => s.caUid !== ca.uid));
+    saveCache(KEY_CERTS, loadCache<Certificate[]>(KEY_CERTS, []).filter(c => c.caUid !== ca.uid));
+    saveCache(KEY_EMAIL_LOGS, loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []).filter(l => l.caUid !== ca.uid));
+  }
 
   await deleteDoc(doc(db, 'campusAmbassadors', ca.uid));
   await Promise.all(
@@ -1280,7 +1295,7 @@ export async function deleteCampusAmbassador(
     adminEmail,
     'admin',
     'CA_ACCOUNT_DELETED',
-    `Deleted unused Campus Ambassador account ${ca.name} (${ca.caId}, ${ca.email})`,
+    `Deleted Campus Ambassador account ${ca.name} (${ca.caId}, ${ca.email})${deleteAssociatedRecords ? ' along with associated students, certificates, and email logs' : ''}`,
     ca.uid
   );
 }

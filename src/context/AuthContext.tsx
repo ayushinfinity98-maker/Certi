@@ -311,7 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         `The Google account "${googleEmail}" is not registered as an authorized Campus Ambassador. Please ask the Super Admin (${BOOTSTRAP_ADMIN_EMAIL}) to add your Google email in the Admin Dashboard.`
       );
     } catch (error: any) {
-      console.warn('Google Sign-in notice:', error);
+      console.error('Google Sign-in error:', error?.code, error?.message, error);
       const errCode = error?.code || '';
       const errMsg = (error?.message || '').toLowerCase();
       if (
@@ -323,7 +323,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         errMsg.includes('verification')
       ) {
         throw new Error(
-          'Google Sign-In was blocked or closed. Please sign in using your Email/CA ID and Password above (or ask the Admin to set the OAuth Consent Screen to "In Production" in Google Cloud Console).'
+          `Google Sign-In failed (${errCode || 'access_denied'}): ${error?.message || 'Popup was blocked or closed.'} You can also sign in using your Email/CA ID and Password above.`
         );
       }
       throw error;

@@ -271,19 +271,30 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                     <span className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider text-gray-400 block">
                       Authorized Signature
                     </span>
-                    <div className="h-10 sm:h-12 flex items-center justify-end">
-                      {certificate.signatureUrl ? (
-                        <img
-                          src={certificate.signatureUrl}
-                          alt="Authorized Signature"
-                          className="max-h-10 sm:max-h-12 object-contain"
-                        />
-                      ) : (
-                        <span className="text-xs font-serif italic text-gray-400">
-                          {certificate.caName}
-                        </span>
-                      )}
-                    </div>
+                    {(() => {
+                      const sigScale = (template.signatureScale ?? 100) / 100;
+                      const hPx = Math.round(44 * sigScale);
+                      const wPx = Math.round(160 * sigScale);
+                      return (
+                        <div
+                          className="flex items-center justify-end"
+                          style={{ height: `${hPx}px`, maxWidth: `${wPx}px` }}
+                        >
+                          {certificate.signatureUrl ? (
+                            <img
+                              src={certificate.signatureUrl}
+                              alt="Authorized Signature"
+                              style={{ maxHeight: `${hPx}px`, maxWidth: `${wPx}px` }}
+                              className="object-contain"
+                            />
+                          ) : (
+                            <span className="text-xs font-serif italic text-gray-400">
+                              {certificate.caName}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div className="w-28 sm:w-40 h-[1px] bg-gray-300" />
                     {isPlaceholderEnabled('CA Name', fieldRoles) && (
                       <p className="text-xs sm:text-sm font-bold text-gray-800">
@@ -323,14 +334,18 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                 ? 'monospace'
                 : 'sans-serif';
 
-              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, fieldRoles)) {
+              const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, fieldRoles);
+              const sigWidthPct = el.width ?? 12;
+              const sigHeightPct = el.height ?? 6;
+
+              if (isSigPlaceholder) {
                 content = (
-                  <div className="flex flex-col items-center">
+                  <div className="w-full h-full flex flex-col items-center justify-center">
                     {certificate.signatureUrl ? (
                       <img
                         src={certificate.signatureUrl}
                         alt="Signature"
-                        className="max-h-12 object-contain"
+                        className="w-full h-full object-contain"
                       />
                     ) : (
                       <span
@@ -385,16 +400,18 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                   />
                 );
               } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag, fieldRoles))) {
+                const qrPx = Math.round((el.width ?? 56) * 1.1);
                 content = (
                   <div className="flex flex-col items-center">
                     {qrCodeUrl ? (
                       <img
                         src={qrCodeUrl}
                         alt="QR Code"
-                        className="w-14 h-14 sm:w-16 sm:h-16 rounded bg-white p-0.5 border border-gray-200 shadow-xs"
+                        style={{ width: `${qrPx}px`, height: `${qrPx}px` }}
+                        className="rounded bg-white p-0.5 border border-gray-200 shadow-xs"
                       />
                     ) : (
-                      <div className="w-14 h-14 bg-gray-100 rounded" />
+                      <div style={{ width: `${qrPx}px`, height: `${qrPx}px` }} className="bg-gray-100 rounded" />
                     )}
                     <span className="text-[8px] font-mono font-bold text-blue-600 mt-0.5">
                       {certificate.certificateId}
@@ -403,19 +420,32 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                 );
               } else if (el.type === 'signature') {
                 content = (
-                  <div className="flex flex-col items-center">
-                    {certificate.signatureUrl ? (
-                      <img
-                        src={certificate.signatureUrl}
-                        alt="Signature"
-                        className="max-h-10 object-contain"
-                      />
-                    ) : (
-                      <span className="font-serif italic text-xs text-gray-700">{certificate.caName}</span>
-                    )}
-                    <div className="w-24 h-[1px] bg-gray-400 mt-1" />
-                    <span className="text-[9px] font-bold text-gray-800 mt-0.5">{certificate.caName}</span>
-                    <span className="text-[8px] text-blue-600 font-semibold">{template.signatureTitle || 'Campus Ambassador'}</span>
+                  <div className="flex flex-col items-center w-full">
+                    <div
+                      className="w-full flex items-center justify-center"
+                      style={{ aspectRatio: `${(sigWidthPct * 1.414) / sigHeightPct}` }}
+                    >
+                      {certificate.signatureUrl ? (
+                        <img
+                          src={certificate.signatureUrl}
+                          alt="Signature"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <span
+                          className="font-serif italic text-gray-700"
+                          style={{
+                            fontSize: `${el.fontSize || 13}px`,
+                            color: el.color || '#202124'
+                          }}
+                        >
+                          {certificate.caName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="w-full h-[1px] bg-gray-400 mt-1" />
+                    <span className="text-[9px] font-bold text-gray-800 mt-0.5 whitespace-nowrap">{certificate.caName}</span>
+                    <span className="text-[8px] text-blue-600 font-semibold whitespace-nowrap">{template.signatureTitle || 'Campus Ambassador'}</span>
                   </div>
                 );
               }
@@ -427,6 +457,8 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                   style={{
                     left: `${el.x}%`,
                     top: `${el.y}%`,
+                    width: isSigPlaceholder || el.type === 'signature' ? `${sigWidthPct}%` : undefined,
+                    height: isSigPlaceholder ? `${sigHeightPct}%` : undefined,
                     transform: el.textAlign === 'center' ? 'translate(-50%, -50%)' : el.textAlign === 'right' ? 'translate(-100%, -50%)' : 'translate(0%, -50%)'
                   }}
                 >

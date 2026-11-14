@@ -124,9 +124,22 @@ export async function renderCertificateToCanvas(
             sigImg.crossOrigin = 'anonymous';
             sigImg.src = cert.signatureUrl;
             await new Promise(r => { sigImg.onload = r; sigImg.onerror = r; });
-            const sigW = 260;
-            const sigH = 90;
-            ctx.drawImage(sigImg, elX - (sigW / 2), elY - (sigH / 2), sigW, sigH);
+            const maxW = ((el.width ?? 12) / 100) * width;
+            const maxH = ((el.height ?? 6) / 100) * height;
+            const imgRatio = sigImg.width && sigImg.height ? sigImg.width / sigImg.height : maxW / maxH;
+            let drawW = maxW;
+            let drawH = drawW / imgRatio;
+            if (drawH > maxH) {
+              drawH = maxH;
+              drawW = drawH * imgRatio;
+            }
+            const drawX =
+              el.textAlign === 'left'
+                ? elX
+                : el.textAlign === 'right'
+                ? elX - drawW
+                : elX - drawW / 2;
+            ctx.drawImage(sigImg, drawX, elY - drawH / 2, drawW, drawH);
           } catch (e) {
             console.warn('Sig placeholder render error:', e);
           }
@@ -168,7 +181,7 @@ export async function renderCertificateToCanvas(
           const qrImg = new Image();
           qrImg.src = qrDataUrl;
           await new Promise(r => { qrImg.onload = r; qrImg.onerror = r; });
-          const qrW = 160;
+          const qrW = Math.round((el.width ?? 56) * 2.85);
           ctx.drawImage(qrImg, elX - (qrW / 2), elY - (qrW / 2), qrW, qrW);
 
           ctx.font = 'bold 20px "Google Sans", monospace';
@@ -178,27 +191,36 @@ export async function renderCertificateToCanvas(
           console.warn('QR render error:', e);
         }
       } else if (el.type === 'signature') {
+        const maxW = ((el.width ?? 12) / 100) * width;
+        const maxH = ((el.height ?? 6) / 100) * height;
         if (cert.signatureUrl) {
           try {
             const sigImg = new Image();
             sigImg.crossOrigin = 'anonymous';
             sigImg.src = cert.signatureUrl;
             await new Promise(r => { sigImg.onload = r; sigImg.onerror = r; });
-            const sigW = 280;
-            const sigH = 80;
-            ctx.drawImage(sigImg, elX - (sigW / 2), elY - sigH, sigW, sigH);
+            const imgRatio = sigImg.width && sigImg.height ? sigImg.width / sigImg.height : maxW / maxH;
+            let drawW = maxW;
+            let drawH = drawW / imgRatio;
+            if (drawH > maxH) {
+              drawH = maxH;
+              drawW = drawH * imgRatio;
+            }
+            ctx.drawImage(sigImg, elX - drawW / 2, elY - drawH, drawW, drawH);
           } catch (e) {
             console.warn('Sig render error:', e);
           }
         }
         // Underline and ca name
+        const lineHalfW = Math.max(120, maxW / 2);
         ctx.strokeStyle = '#9AA0A6';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(elX - 140, elY + 5);
-        ctx.lineTo(elX + 140, elY + 5);
+        ctx.moveTo(elX - lineHalfW, elY + 5);
+        ctx.lineTo(elX + lineHalfW, elY + 5);
         ctx.stroke();
 
+        ctx.textAlign = 'center';
         ctx.font = 'bold 26px "Google Sans", Inter, sans-serif';
         ctx.fillStyle = el.color || '#202124';
         ctx.fillText(cert.caName, elX, elY + 36);
@@ -441,9 +463,12 @@ export async function renderCertificateToCanvas(
 
   if (tpl?.showSignature !== false && isPlaceholderEnabled('sign', fieldRoles)) {
     ctx.save();
+    const sigScale = (tpl?.signatureScale ?? 100) / 100;
     const sigX = width - 560;
     const sigWidth = 420;
-    const sigHeight = 110;
+    const sigCenterX = sigX + sigWidth / 2;
+    const maxW = Math.round(420 * sigScale);
+    const maxH = Math.round(110 * sigScale);
 
     if (cert.signatureUrl) {
       try {
@@ -454,7 +479,14 @@ export async function renderCertificateToCanvas(
           sigImg.onload = resolve;
           sigImg.onerror = resolve;
         });
-        ctx.drawImage(sigImg, sigX, bottomY - 70, sigWidth, sigHeight);
+        const imgRatio = sigImg.width && sigImg.height ? sigImg.width / sigImg.height : maxW / maxH;
+        let drawW = maxW;
+        let drawH = drawW / imgRatio;
+        if (drawH > maxH) {
+          drawH = maxH;
+          drawW = drawH * imgRatio;
+        }
+        ctx.drawImage(sigImg, sigCenterX - drawW / 2, bottomY + 55 - drawH, drawW, drawH);
       } catch (e) {
         console.warn('Could not draw signature image onto canvas', e);
       }
@@ -472,16 +504,16 @@ export async function renderCertificateToCanvas(
       const resolvedCaName = resolvePlaceholderValue('CA Name', autoValues, fieldRoles) || cert.caName;
       ctx.font = 'bold 30px "Google Sans", Inter, sans-serif';
       ctx.fillStyle = '#202124';
-      ctx.fillText(resolvedCaName, sigX + (sigWidth / 2), bottomY + 105);
+      ctx.fillText(resolvedCaName, sigCenterX, bottomY + 105);
     }
 
     ctx.font = '600 20px "Google Sans", Inter, sans-serif';
     ctx.fillStyle = '#1A73E8';
-    ctx.fillText(tpl?.signatureTitle || 'Campus Ambassador', sigX + (sigWidth / 2), bottomY + 135);
+    ctx.fillText(tpl?.signatureTitle || 'Campus Ambassador', sigCenterX, bottomY + 135);
 
     ctx.font = '500 18px "Google Sans", Inter, sans-serif';
     ctx.fillStyle = '#5F6368';
-    ctx.fillText(`Google Student Ambassador Program 2026 (${cert.caId})`, sigX + (sigWidth / 2), bottomY + 160);
+    ctx.fillText(`Google Student Ambassador Program 2026 (${cert.caId})`, sigCenterX, bottomY + 160);
     ctx.restore();
   }
 

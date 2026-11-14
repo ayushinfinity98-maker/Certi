@@ -762,6 +762,8 @@ export function getOverlayPlaceholderElements(
       placeholderTag: role.tag,
       x: typeof role.x === 'number' ? role.x : 50,
       y: typeof role.y === 'number' ? role.y : 70,
+      width: typeof role.width === 'number' ? role.width : (isSignaturePlaceholderTag(role.tag, roleList) ? 12 : undefined),
+      height: typeof role.height === 'number' ? role.height : (isSignaturePlaceholderTag(role.tag, roleList) ? 6 : undefined),
       fontSize: role.fontSize || 14,
       fontWeight: role.fontWeight || '600',
       fontFamily: role.fontFamily || 'sans',
@@ -775,6 +777,8 @@ export const STANDARD_SLIDE_PLACEHOLDER_PRESETS: Array<{
   label: string;
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   fontSize: number;
   fontWeight: 'normal' | 'bold' | '600';
   fontFamily: 'serif' | 'sans' | 'mono';
@@ -783,7 +787,7 @@ export const STANDARD_SLIDE_PLACEHOLDER_PRESETS: Array<{
   { tag: 'name', label: '{{name}}', x: 50, y: 42.3, fontSize: 24, fontWeight: 'bold', fontFamily: 'serif', color: '#1A73E8' },
   { tag: 'event', label: '{{event}}', x: 46.8, y: 53.9, fontSize: 15, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
   { tag: 'university', label: '{{university}}', x: 77.1, y: 60, fontSize: 13, fontWeight: 'normal', fontFamily: 'sans', color: '#3C4043' },
-  { tag: 'sign', label: '{{sign}}', x: 77, y: 83.9, fontSize: 14, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
+  { tag: 'sign', label: '{{sign}}', x: 77, y: 83.9, width: 12, height: 6, fontSize: 14, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
   { tag: 'date', label: '{{date}}', x: 22.8, y: 84.2, fontSize: 12, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
   { tag: 'CA Name', label: '{{CA Name}}', x: 50, y: 84.6, fontSize: 12, fontWeight: '600', fontFamily: 'sans', color: '#202124' },
 ];

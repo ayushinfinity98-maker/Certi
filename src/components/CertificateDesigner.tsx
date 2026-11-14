@@ -28,6 +28,7 @@ import {
   Check, 
   Trash2, 
   Plus, 
+  Minus,
   RotateCcw,
   Sliders,
   Layers,
@@ -37,9 +38,14 @@ import {
   Link,
   QrCode,
   PenTool,
-  ExternalLink
+  ExternalLink,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  Bold
 } from 'lucide-react';
-import { processSignatureImageFile } from '../utils/signatureUtils';
+import { processSignatureImageFile, generateScriptSignatureDataUrl } from '../utils/signatureUtils';
 import { importFromGoogleSlide, SlideAuthError } from '../services/googleSlidesService';
 import { authorizeGoogleWorkspacePopup, getWorkspaceAuthToken, MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
 import { PlaceholdersModal } from './PlaceholdersModal';
@@ -62,6 +68,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   const [isPlaceholdersModalOpen, setIsPlaceholdersModalOpen] = useState(false);
   const selectedIdRef = useRef<string>('');
   const isDirtyRef = useRef<boolean>(false);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [sampleSigUrl] = useState<string>(() =>
+    typeof document !== 'undefined' ? generateScriptSignatureDataUrl('Priya Sharma') : ''
+  );
 
   const loadTemplates = async (forceRefreshActive = false) => {
     const list = await getAllCertificateTemplates();
@@ -99,6 +109,129 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     });
     return () => unsub();
   }, []);
+
+  const nudgeSelectedElement = (dx: number, dy: number) => {
+    if (!selectedElementId) return;
+    isDirtyRef.current = true;
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).map(el => {
+        if (el.id !== selectedElementId) return el;
+        const nextX = Math.max(0, Math.min(100, Math.round((el.x + dx) * 10) / 10));
+        const nextY = Math.max(0, Math.min(100, Math.round((el.y + dy) * 10) / 10));
+        return { ...el, x: nextX, y: nextY };
+      })
+    }));
+  };
+
+  const resizeSelectedElement = (direction: 1 | -1, fast?: boolean) => {
+    if (!selectedElementId) return;
+    isDirtyRef.current = true;
+    const mult = fast ? 3 : 1;
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).map(el => {
+        if (el.id !== selectedElementId) return el;
+        const isSig =
+          el.type === 'signature' ||
+          (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag));
+        const isQr =
+          el.type === 'qr' ||
+          (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag));
+
+        if (isSig) {
+          const nextW = Math.max(4, Math.min(40, Math.round(((el.width ?? 12) + direction * 1 * mult) * 10) / 10));
+          const nextH = Math.max(2, Math.min(25, Math.round(((el.height ?? 6) + direction * 0.5 * mult) * 10) / 10));
+          return { ...el, width: nextW, height: nextH };
+        }
+        if (el.type === 'image') {
+          const nextW = Math.max(4, Math.min(80, Math.round(((el.width ?? 12) + direction * 1.5 * mult) * 10) / 10));
+          const nextH = Math.max(4, Math.min(80, Math.round(((el.height ?? 12) + direction * 1.5 * mult) * 10) / 10));
+          return { ...el, width: nextW, height: nextH };
+        }
+        if (isQr) {
+          const nextSize = Math.max(28, Math.min(140, Math.round((el.width ?? 56) + direction * 4 * mult)));
+          return { ...el, width: nextSize, height: nextSize };
+        }
+        const nextFont = Math.max(8, Math.min(96, Math.round((el.fontSize || 16) + direction * 1 * mult)));
+        return { ...el, fontSize: nextFont };
+      })
+    }));
+  };
+
+  const toggleBoldSelectedElement = () => {
+    if (!selectedElementId) return;
+    isDirtyRef.current = true;
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).map(el => {
+        if (el.id !== selectedElementId) return el;
+        return { ...el, fontWeight: el.fontWeight === 'bold' ? 'normal' : 'bold' };
+      })
+    }));
+  };
+
+  const deleteSelectedElement = () => {
+    if (!selectedElementId) return;
+    isDirtyRef.current = true;
+    setActiveConfig(prev => ({
+      ...prev,
+      customElements: (prev.customElements || []).filter(el => el.id !== selectedElementId)
+    }));
+    setSelectedElementId(null);
+  };
+
+  // Keyboard Arrow Keys positioning, +/- resizing, B bold toggle & Delete for selected placeholder
+  useEffect(() => {
+    if (!selectedElementId || isPlaceholdersModalOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        const step = e.shiftKey ? 2 : e.altKey ? 0.1 : 0.5;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        nudgeSelectedElement(dx, dy);
+        return;
+      }
+
+      if (!e.ctrlKey && !e.metaKey) {
+        if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+          e.preventDefault();
+          resizeSelectedElement(1, e.altKey);
+          return;
+        }
+        if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+          e.preventDefault();
+          resizeSelectedElement(-1, e.altKey);
+          return;
+        }
+        if (!e.altKey && (e.key === 'b' || e.key === 'B')) {
+          e.preventDefault();
+          toggleBoldSelectedElement();
+          return;
+        }
+        if (!e.altKey && (e.key === 'Delete' || e.key === 'Backspace')) {
+          e.preventDefault();
+          deleteSelectedElement();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedElementId, isPlaceholdersModalOpen]);
 
   const handleSelectTemplate = (tpl: CertificateTemplateConfig) => {
     selectedIdRef.current = tpl.id;
@@ -189,6 +322,8 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
           label: 'CA Signature',
           x: 80,
           y: 84,
+          width: 12,
+          height: 6,
           fontSize: 13,
           color: '#202124',
           textAlign: 'right'
@@ -247,6 +382,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       return false;
     });
 
+    const isSig = type === 'signature' || (type === 'placeholder' && isSignaturePlaceholderTag(tag));
     const newEl: CertificateCustomElement = {
       id: `el_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type,
@@ -255,6 +391,8 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       customText: type === 'text' ? 'Custom Text Box' : undefined,
       x: preset ? preset.x : 50,
       y: preset ? preset.y : 50,
+      width: isSig ? (preset?.width ?? 12) : preset?.width,
+      height: isSig ? (preset?.height ?? 6) : preset?.height,
       fontSize: preset ? preset.fontSize : 16,
       fontWeight: preset ? preset.fontWeight : '600',
       fontFamily: preset ? preset.fontFamily : 'sans',
@@ -297,6 +435,8 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
           placeholderTag: preset.tag,
           x: preset.x,
           y: preset.y,
+          width: preset.width,
+          height: preset.height,
           fontSize: preset.fontSize,
           fontWeight: preset.fontWeight,
           fontFamily: preset.fontFamily,
@@ -644,6 +784,33 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 </button>
               </div>
             </div>
+
+            {/* Auto-Layout Signature Size Control (when Google Quad auto-layout is selected) */}
+            {activeConfig.elementsMode !== 'manual_placed' && activeConfig.type === 'standard_google' && (
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-gray-800">
+                  <span>Authorized Signature Size</span>
+                  <span className="text-blue-600 font-mono">{activeConfig.signatureScale ?? 100}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="200"
+                  step="5"
+                  value={activeConfig.signatureScale ?? 100}
+                  onChange={(e) => {
+                    isDirtyRef.current = true;
+                    setActiveConfig(prev => ({ ...prev, signatureScale: Number(e.target.value) }));
+                  }}
+                  className="w-full accent-blue-600"
+                />
+                <div className="flex justify-between text-[10px] text-gray-500">
+                  <span>50% (Compact)</span>
+                  <span>100% (Default)</span>
+                  <span>200% (Large)</span>
+                </div>
+              </div>
+            )}
 
             {/* Background Upload & Solid Color Field */}
             {(activeConfig.type === 'custom_uploaded' || activeConfig.type === 'blank_plain') && (
@@ -997,20 +1164,184 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   </div>
                 </div>
 
+                {/* Keyboard Arrow Keys, +/- Resize & Quick Nudge Pad */}
+                <div className="p-2.5 bg-white/80 border border-blue-200/80 rounded-xl flex items-center justify-between gap-2">
+                  <div className="text-[10px] text-gray-600 leading-snug">
+                    <span className="font-bold text-blue-900 block">Keyboard Controls Enabled</span>
+                    <span>
+                      Move: <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">↑</kbd> <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">↓</kbd> <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">←</kbd> <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">→</kbd> · Size: <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">+</kbd> / <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">-</kbd> · Bold: <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">B</kbd> · Remove: <kbd className="px-1 py-0.2 bg-gray-100 border border-gray-300 rounded font-mono">Del</kbd>
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    <div className="flex items-center space-x-0.5 pr-1.5 border-r border-blue-200">
+                      <button
+                        type="button"
+                        onClick={toggleBoldSelectedElement}
+                        className={`p-1.5 rounded-lg border transition ${
+                          selectedElement.fontWeight === 'bold'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 border-gray-200'
+                        }`}
+                        title="Toggle Bold (B key)"
+                      >
+                        <Bold className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resizeSelectedElement(-1)}
+                        className="p-1.5 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                        title="Decrease Size (- key)"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resizeSelectedElement(1)}
+                        className="p-1.5 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                        title="Increase Size (+ key)"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => nudgeSelectedElement(-0.5, 0)}
+                      className="p-1.5 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                      title="Move Left (-0.5%)"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="flex flex-col space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => nudgeSelectedElement(0, -0.5)}
+                        className="p-1 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                        title="Move Up (-0.5%)"
+                      >
+                        <ArrowUp className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nudgeSelectedElement(0, 0.5)}
+                        className="p-1 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                        title="Move Down (+0.5%)"
+                      >
+                        <ArrowDown className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => nudgeSelectedElement(0.5, 0)}
+                      className="p-1.5 bg-slate-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 rounded-lg border border-gray-200 transition"
+                      title="Move Right (+0.5%)"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Signature Size Sliders & Presets (shown for {{sign}} or Signature Block) */}
+                {(selectedElement.type === 'signature' ||
+                  (selectedElement.type === 'placeholder' && isSignaturePlaceholderTag(selectedElement.placeholderTag))) && (
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-950 flex items-center">
+                        <PenTool className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
+                        Signature Size
+                      </span>
+                      <div className="flex items-center space-x-1">
+                        {[
+                          { label: 'S', w: 8, h: 4 },
+                          { label: 'M', w: 12, h: 6 },
+                          { label: 'L', w: 18, h: 9 },
+                          { label: 'XL', w: 24, h: 12 }
+                        ].map(preset => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() =>
+                              handleUpdateElement(selectedElement.id, { width: preset.w, height: preset.h })
+                            }
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                              (selectedElement.width ?? 12) === preset.w && (selectedElement.height ?? 6) === preset.h
+                                ? 'bg-amber-600 text-white border-amber-600'
+                                : 'bg-white text-amber-900 border-amber-200 hover:bg-amber-100'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex justify-between text-[11px] font-semibold text-gray-700 mb-1">
+                          <span>Width:</span>
+                          <span className="font-mono font-bold text-amber-900">{selectedElement.width ?? 12}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="4"
+                          max="40"
+                          step="0.5"
+                          value={selectedElement.width ?? 12}
+                          onChange={(e) => handleUpdateElement(selectedElement.id, { width: Number(e.target.value) })}
+                          className="w-full accent-amber-600"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] font-semibold text-gray-700 mb-1">
+                          <span>Height:</span>
+                          <span className="font-mono font-bold text-amber-900">{selectedElement.height ?? 6}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="2"
+                          max="25"
+                          step="0.5"
+                          value={selectedElement.height ?? 6}
+                          onChange={(e) => handleUpdateElement(selectedElement.id, { height: Number(e.target.value) })}
+                          className="w-full accent-amber-600"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Font Size & Color */}
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-600 mb-1">
                       Font Size
                     </label>
-                    <input
-                      type="number"
-                      min="10"
-                      max="60"
-                      value={selectedElement.fontSize || 16}
-                      onChange={(e) => handleUpdateElement(selectedElement.id, { fontSize: Number(e.target.value) })}
-                      className="w-full px-2 py-1 bg-white border border-gray-300 rounded-lg text-xs"
-                    />
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => resizeSelectedElement(-1)}
+                        className="px-1.5 h-7 bg-slate-100 hover:bg-blue-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-700 hover:text-blue-700 transition"
+                        title="Decrease Size (-)"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <input
+                        type="number"
+                        min="8"
+                        max="96"
+                        value={selectedElement.fontSize || 16}
+                        onChange={(e) => handleUpdateElement(selectedElement.id, { fontSize: Number(e.target.value) })}
+                        className="w-full h-7 px-1.5 bg-white border border-gray-300 text-xs text-center font-semibold focus:outline-hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => resizeSelectedElement(1)}
+                        className="px-1.5 h-7 bg-slate-100 hover:bg-blue-100 border border-l-0 border-gray-300 rounded-r-lg text-gray-700 hover:text-blue-700 transition"
+                        title="Increase Size (+)"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -1110,19 +1441,21 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
 
         {/* Right Column: Interactive Certificate Canvas Preview (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between">
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex items-center justify-between flex-wrap gap-2">
             <span className="text-xs font-bold text-gray-800 flex items-center">
               <Eye className="w-4 h-4 text-emerald-600 mr-1.5" />
               Live Interactive Certificate Canvas (A4 Landscape)
             </span>
             <span className="text-[11px] text-gray-400 font-medium">
-              Click elements to select and reposition
+              Click element: Arrow keys move · <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">+</kbd> / <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">-</kbd> resize · <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">B</kbd> bold · <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">Del</kbd> remove
             </span>
           </div>
 
           {/* Canvas Box */}
-          <div 
-            className="w-full bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-300 transition-all aspect-[1.414/1] p-4 select-none"
+          <div
+            ref={canvasRef}
+            tabIndex={-1}
+            className="w-full bg-white rounded-2xl shadow-xl overflow-hidden relative border border-gray-300 transition-all aspect-[1.414/1] p-4 select-none outline-hidden focus:ring-2 focus:ring-blue-400/60"
             style={{
               backgroundImage: activeConfig.backgroundUrl ? `url(${activeConfig.backgroundUrl})` : undefined,
               backgroundSize: '100% 100%',
@@ -1175,7 +1508,24 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   </div>
                   <div className="text-right">
                     <span className="text-[9px] text-gray-400 block uppercase">Authorized Signature</span>
-                    <span className="font-serif italic text-xs">Priya Sharma</span>
+                    {sampleSigUrl ? (
+                      <img
+                        src={sampleSigUrl}
+                        alt="Sample Signature"
+                        style={{
+                          height: `${Math.round(28 * ((activeConfig.signatureScale ?? 100) / 100))}px`,
+                          maxWidth: `${Math.round(120 * ((activeConfig.signatureScale ?? 100) / 100))}px`
+                        }}
+                        className="object-contain ml-auto"
+                      />
+                    ) : (
+                      <span
+                        className="font-serif italic block"
+                        style={{ fontSize: `${Math.round(12 * ((activeConfig.signatureScale ?? 100) / 100))}px` }}
+                      >
+                        Priya Sharma
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1184,6 +1534,9 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
             {/* Manually Placed / Google Slide Imported Elements */}
             {(activeConfig.customElements || []).map(el => {
               const isSelected = el.id === selectedElementId;
+              const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag);
+              const sigWidthPct = el.width ?? 12;
+              const sigHeightPct = el.height ?? 6;
               const resolvedFont = el.customFontName
                 ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
                 : el.fontFamily === 'serif'
@@ -1193,18 +1546,26 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 : 'sans-serif';
               let content: React.ReactNode = null;
 
-              if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag)) {
+              if (isSigPlaceholder) {
                 content = (
-                  <div className="flex flex-col items-center px-2 py-0.5 border border-dashed border-amber-300/80 rounded bg-amber-50/40">
-                    <span
-                      className="font-serif italic"
-                      style={{
-                        fontSize: `${el.fontSize || 15}px`,
-                        color: el.color || '#202124'
-                      }}
-                    >
-                      Priya Sharma (Sign)
-                    </span>
+                  <div className="w-full h-full flex flex-col items-center justify-center p-1 border border-dashed border-amber-400/90 rounded bg-amber-50/40 overflow-hidden">
+                    {sampleSigUrl ? (
+                      <img
+                        src={sampleSigUrl}
+                        alt="Signature Preview"
+                        className="w-full h-full object-contain pointer-events-none"
+                      />
+                    ) : (
+                      <span
+                        className="font-serif italic"
+                        style={{
+                          fontSize: `${el.fontSize || 15}px`,
+                          color: el.color || '#202124'
+                        }}
+                      >
+                        Priya Sharma (Sign)
+                      </span>
+                    )}
                   </div>
                 );
               } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag)) {
@@ -1247,18 +1608,35 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   />
                 );
               } else if (el.type === 'qr' || (el.type === 'placeholder' && isQrPlaceholderTag(el.placeholderTag))) {
+                const qrPx = el.width ?? 56;
                 content = (
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-white border border-slate-300 rounded p-1 flex flex-col items-center justify-center shadow-xs">
-                    <QrCode className="w-7 h-7 text-blue-600" />
+                  <div
+                    className="bg-white border border-slate-300 rounded p-1 flex flex-col items-center justify-center shadow-xs"
+                    style={{ width: `${qrPx}px`, height: `${qrPx}px` }}
+                  >
+                    <QrCode className="text-blue-600" style={{ width: `${Math.round(qrPx * 0.5)}px`, height: `${Math.round(qrPx * 0.5)}px` }} />
                     <span className="text-[6px] font-mono font-bold text-gray-500">QR VERIFY</span>
                   </div>
                 );
               } else if (el.type === 'signature') {
                 content = (
-                  <div className="flex flex-col items-center">
-                    <span className="font-serif italic text-sm text-gray-700">Priya Sharma</span>
-                    <div className="w-20 h-[1px] bg-gray-400 mt-0.5" />
-                    <span className="text-[8px] font-bold text-blue-600 mt-0.5">Campus Ambassador</span>
+                  <div className="flex flex-col items-center w-full">
+                    <div
+                      className="w-full flex items-center justify-center border border-dashed border-amber-300/80 rounded bg-amber-50/30 overflow-hidden"
+                      style={{ aspectRatio: `${(sigWidthPct * 1.414) / sigHeightPct}` }}
+                    >
+                      {sampleSigUrl ? (
+                        <img
+                          src={sampleSigUrl}
+                          alt="Signature Preview"
+                          className="w-full h-full object-contain pointer-events-none"
+                        />
+                      ) : (
+                        <span className="font-serif italic text-sm text-gray-700">Priya Sharma</span>
+                      )}
+                    </div>
+                    <div className="w-full h-[1px] bg-gray-400 mt-0.5" />
+                    <span className="text-[8px] font-bold text-blue-600 mt-0.5 whitespace-nowrap">Campus Ambassador</span>
                   </div>
                 );
               }
@@ -1269,6 +1647,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedElementId(el.id);
+                    canvasRef.current?.focus({ preventScroll: true });
                   }}
                   className={`absolute cursor-pointer transition-transform ${
                     isSelected ? 'ring-2 ring-blue-500 ring-offset-2 z-30' : 'hover:outline hover:outline-1 hover:outline-blue-400 z-20'
@@ -1276,6 +1655,8 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   style={{
                     left: `${el.x}%`,
                     top: `${el.y}%`,
+                    width: isSigPlaceholder || el.type === 'signature' ? `${sigWidthPct}%` : undefined,
+                    height: isSigPlaceholder ? `${sigHeightPct}%` : undefined,
                     transform: el.textAlign === 'center' ? 'translate(-50%, -50%)' : el.textAlign === 'right' ? 'translate(-100%, -50%)' : 'translate(0%, -50%)'
                   }}
                 >
@@ -1292,7 +1673,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
           </div>
 
           <p className="text-[11px] text-gray-400 text-center">
-            Tip: Click on any element above to highlight and edit its coordinates. Click "Save Template" to apply across the entire portal.
+            Tip: Click any element on the canvas and use keyboard Arrow keys to position it, <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">+</kbd> / <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">-</kbd> to resize, <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">B</kbd> to toggle bold, and <kbd className="px-1 bg-gray-100 border border-gray-200 rounded font-mono">Delete</kbd> to remove. Click &quot;Save Template&quot; to apply.
           </p>
         </div>
 

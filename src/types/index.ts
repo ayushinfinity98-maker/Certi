@@ -166,6 +166,7 @@ export interface CertificateTemplateConfig {
   showQrCode: boolean;
   showSignature: boolean;
   signatureTitle: string; // e.g. "Campus Ambassador"
+  signatureScale?: number; // percentage 50 - 200 (default 100) for auto-layout signature size
   primaryColor: string; // e.g. "#1A73E8"
   fontFamily: 'serif' | 'sans';
   isActive: boolean;
@@ -249,6 +250,8 @@ export interface PlaceholderRoleConfig {
   renderOnCanvas?: boolean;
   x?: number;
   y?: number;
+  width?: number;
+  height?: number;
   fontSize?: number;
   color?: string;
   fontWeight?: 'normal' | '600' | 'bold';

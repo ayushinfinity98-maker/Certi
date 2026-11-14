@@ -454,17 +454,46 @@ export const PlaceholderRoleManager: React.FC<PlaceholderRoleManagerProps> = ({
                                 className="w-16 px-1.5 py-0.5 bg-white border border-gray-300 rounded"
                               />
                             </label>
-                            <label className="flex items-center space-x-1">
-                              <span className="text-gray-500">Size:</span>
-                              <input
-                                type="number"
-                                min={10}
-                                max={48}
-                                value={role.fontSize ?? 14}
-                                onChange={(e) => updateRole(role.tag, { fontSize: Number(e.target.value) })}
-                                className="w-14 px-1.5 py-0.5 bg-white border border-gray-300 rounded"
-                              />
-                            </label>
+                            {isSignaturePlaceholderTag(role.tag, mergedRoles) ? (
+                              <>
+                                <label className="flex items-center space-x-1">
+                                  <span className="text-gray-500">W%:</span>
+                                  <input
+                                    type="number"
+                                    min={4}
+                                    max={40}
+                                    step={0.5}
+                                    value={role.width ?? 12}
+                                    onChange={(e) => updateRole(role.tag, { width: Number(e.target.value) })}
+                                    className="w-14 px-1.5 py-0.5 bg-white border border-gray-300 rounded"
+                                  />
+                                </label>
+                                <label className="flex items-center space-x-1">
+                                  <span className="text-gray-500">H%:</span>
+                                  <input
+                                    type="number"
+                                    min={2}
+                                    max={25}
+                                    step={0.5}
+                                    value={role.height ?? 6}
+                                    onChange={(e) => updateRole(role.tag, { height: Number(e.target.value) })}
+                                    className="w-14 px-1.5 py-0.5 bg-white border border-gray-300 rounded"
+                                  />
+                                </label>
+                              </>
+                            ) : (
+                              <label className="flex items-center space-x-1">
+                                <span className="text-gray-500">Size:</span>
+                                <input
+                                  type="number"
+                                  min={10}
+                                  max={48}
+                                  value={role.fontSize ?? 14}
+                                  onChange={(e) => updateRole(role.tag, { fontSize: Number(e.target.value) })}
+                                  className="w-14 px-1.5 py-0.5 bg-white border border-gray-300 rounded"
+                                />
+                              </label>
+                            )}
                             <input
                               type="color"
                               value={role.color || '#202124'}
@@ -572,9 +601,16 @@ export const PlaceholderRoleManager: React.FC<PlaceholderRoleManagerProps> = ({
                     if (el.type === 'qr' && !isPlaceholderEnabled('qr', mergedRoles)) return null;
                     if (el.type === 'signature' && !isPlaceholderEnabled('sign', mergedRoles)) return null;
 
+                    const isSigPlaceholder = el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, mergedRoles);
+                    const sigWidthPct = el.width ?? 12;
+                    const sigHeightPct = el.height ?? 6;
                     let content: React.ReactNode = null;
-                    if (el.type === 'placeholder' && isSignaturePlaceholderTag(el.placeholderTag, mergedRoles)) {
-                      content = <span className="font-serif italic text-[11px] text-gray-800">{sampleValues.ca_name} (Sign)</span>;
+                    if (isSigPlaceholder) {
+                      content = (
+                        <div className="w-full h-full flex items-center justify-center border border-dashed border-amber-400 rounded bg-amber-50/40 px-1 overflow-hidden">
+                          <span className="font-serif italic text-[10px] text-gray-800 truncate">{sampleValues.ca_name} (Sign)</span>
+                        </div>
+                      );
                     } else if (el.type === 'placeholder' && !isQrPlaceholderTag(el.placeholderTag, mergedRoles)) {
                       const val = resolvePlaceholderValue(el.placeholderTag, sampleValues, mergedRoles) ?? `{{${el.placeholderTag}}}`;
                       content = (
@@ -614,6 +650,8 @@ export const PlaceholderRoleManager: React.FC<PlaceholderRoleManagerProps> = ({
                         style={{
                           left: `${el.x}%`,
                           top: `${el.y}%`,
+                          width: isSigPlaceholder ? `${sigWidthPct}%` : undefined,
+                          height: isSigPlaceholder ? `${sigHeightPct}%` : undefined,
                           transform: el.textAlign === 'center' ? 'translate(-50%, -50%)' : el.textAlign === 'right' ? 'translate(-100%, -50%)' : 'translate(0%, -50%)'
                         }}
                       >

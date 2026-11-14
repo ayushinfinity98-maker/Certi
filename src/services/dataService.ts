@@ -662,36 +662,29 @@ function normalizeCaRecord(ca: CampusAmbassador): { normalized: CampusAmbassador
 
 async function syncCasToCloud(fromDb: CampusAmbassador[], cached: CampusAmbassador[]): Promise<{ syncedCount: number }> {
   const now = Date.now();
-  if (now - lastCloudSyncAt < 8000) {
+  if (now - lastCloudSyncAt < 3000) {
     return { syncedCount: 0 };
   }
   lastCloudSyncAt = now;
 
   const dbUidSet = new Set(fromDb.map(c => c.uid));
   const localOnlyCas = cached.filter(c => !dbUidSet.has(c.uid));
-  let syncedCount = 0;
 
-  // 1. Repair & sync directory for CAs already in Firestore
-  for (const ca of fromDb) {
+  const syncSingle = async (ca: CampusAmbassador, mustWriteDoc: boolean) => {
     const { normalized, changed } = normalizeCaRecord(ca);
-    if (changed) {
+    if (mustWriteDoc || changed) {
       await setDoc(doc(db, 'campusAmbassadors', normalized.uid), normalized, { merge: true }).catch(() => {});
     }
     await writeCaDirectoryEntries(normalized);
     await provisionCaFirebaseAuth(normalized.email, normalized.initialPassword || 'Ambassador@2026');
-    syncedCount++;
-  }
+  };
 
-  // 2. Push any CAs that were only saved in localStorage (e.g. while Admin used Direct Admin Login)
-  for (const localCa of localOnlyCas) {
-    const { normalized } = normalizeCaRecord(localCa);
-    await setDoc(doc(db, 'campusAmbassadors', normalized.uid), normalized, { merge: true }).catch(() => {});
-    await writeCaDirectoryEntries(normalized);
-    await provisionCaFirebaseAuth(normalized.email, normalized.initialPassword || 'Ambassador@2026');
-    syncedCount++;
-  }
+  await Promise.all([
+    ...fromDb.map(ca => syncSingle(ca, false)),
+    ...localOnlyCas.map(localCa => syncSingle(localCa, true))
+  ]);
 
-  return { syncedCount };
+  return { syncedCount: fromDb.length + localOnlyCas.length };
 }
 
 export async function syncAllCasToCloud(): Promise<{ syncedCount: number }> {
@@ -806,7 +799,8 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
  * without exposing the whole collection.
  */
 export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
-  const emailLower = email.toLowerCase().trim();
+  const rawTrimmed = email.trim();
+  const emailLower = rawTrimmed.toLowerCase();
   if (!emailLower) return null;
 
   try {
@@ -816,14 +810,41 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
       const d = snapGoogle.docs[0];
       return { ...d.data(), uid: d.id } as CampusAmbassador;
     }
+  } catch (error) {
+    console.warn('Firestore googleEmail query notice:', error);
+  }
 
+  try {
     const qEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', emailLower));
     const snapEmail = await getDocs(qEmail);
     if (!snapEmail.empty) {
       const d = snapEmail.docs[0];
       return { ...d.data(), uid: d.id } as CampusAmbassador;
     }
+  } catch (error) {
+    console.warn('Firestore email query notice:', error);
+  }
 
+  if (rawTrimmed !== emailLower) {
+    try {
+      const qRawGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', rawTrimmed));
+      const snapRawGoogle = await getDocs(qRawGoogle);
+      if (!snapRawGoogle.empty) {
+        const d = snapRawGoogle.docs[0];
+        return { ...d.data(), uid: d.id } as CampusAmbassador;
+      }
+      const qRawEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', rawTrimmed));
+      const snapRawEmail = await getDocs(qRawEmail);
+      if (!snapRawEmail.empty) {
+        const d = snapRawEmail.docs[0];
+        return { ...d.data(), uid: d.id } as CampusAmbassador;
+      }
+    } catch (error) {
+      console.warn('Firestore raw email query notice:', error);
+    }
+  }
+
+  try {
     // Fallback via caDirectory exact key lookup
     const dirEntry = await lookupCaDirectoryByCaId(emailLower);
     if (dirEntry?.uid) {
@@ -833,7 +854,7 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
       }
     }
   } catch (error) {
-    console.warn('Firestore getCampusAmbassadorByGoogleEmail notice:', error);
+    console.warn('Firestore caDirectory lookup notice:', error);
   }
 
   // Fallback: local cache (only helps on the device where the CA was created)

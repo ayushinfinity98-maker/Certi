@@ -270,12 +270,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (matchedCA) {
         if (matchedCA.allowGoogleLogin === false) {
+          await signOut(auth).catch(() => {});
           throw new Error('Google Sign-in is not enabled for this Ambassador account. Please log in using your CA ID/Email and Password.');
         }
         if (matchedCA.status === 'suspended') {
+          await signOut(auth).catch(() => {});
           throw new Error('Your Campus Ambassador account is suspended by the Super Administrator.');
         }
         if (matchedCA.status === 'deactivated') {
+          await signOut(auth).catch(() => {});
           throw new Error('Your Campus Ambassador account is currently deactivated.');
         }
 
@@ -302,7 +305,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // If user is neither Super Admin nor recognized CA
+      // If user is neither Super Admin nor recognized CA, sign out so LoginPage shows clear error
+      await signOut(auth).catch(() => {});
       throw new Error(
         `The Google account "${googleEmail}" is not registered as an authorized Campus Ambassador. Please ask the Super Admin (${BOOTSTRAP_ADMIN_EMAIL}) to add your Google email in the Admin Dashboard.`
       );

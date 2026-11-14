@@ -86,8 +86,10 @@ service cloud.firestore {
         isSignedIn() &&
         request.auth.token.email != null &&
         (
-          (resource.data.googleEmail is string && resource.data.googleEmail.lower() == request.auth.token.email.lower()) ||
-          (resource.data.email is string && resource.data.email.lower() == request.auth.token.email.lower())
+          resource.data.googleEmail == request.auth.token.email.lower() ||
+          resource.data.email == request.auth.token.email.lower() ||
+          resource.data.googleEmail == request.auth.token.email ||
+          resource.data.email == request.auth.token.email
         )
       );
       allow write: if isAdmin();

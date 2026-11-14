@@ -23,8 +23,7 @@ import {
 } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
 import {
-  getAllCampusAmbassadors,
-  getCampusAmbassadorByGoogleEmail,
+  lookupCampusAmbassadorByEmail,
   lookupCaDirectoryByCaId,
   syncAllCasToCloud
 } from '../services/dataService';
@@ -132,20 +131,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // 2. CAMPUS AMBASSADOR CHECK (ONLY via getCampusAmbassadorByGoogleEmail)
-      let matchedCA: CampusAmbassador | null = null;
-      try {
-        matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
-      } catch (err: any) {
-        console.error('loadUserProfile Firestore query error:', err?.code, err?.message, err);
-        setAuthError(formatAuthLookupError(err));
+      // 2. CAMPUS AMBASSADOR CHECK (precise non-recursive lookup)
+      const lookupRes = await lookupCampusAmbassadorByEmail(emailLower);
+      if (lookupRes.status === 'permission_denied') {
+        console.error(
+          '[FirebaseAuth/Firestore] loadUserProfile permission denied - errorCode:',
+          lookupRes.errorCode,
+          '| message:',
+          lookupRes.errorMessage
+        );
+        setAuthError(formatAuthLookupError({ code: lookupRes.errorCode, message: lookupRes.errorMessage }));
+        setRole(null);
+        setCaProfile(null);
+        setAdminProfile(null);
+        return;
+      }
+      if (lookupRes.status === 'error') {
+        console.error(
+          '[FirebaseAuth/Firestore] loadUserProfile query error - errorCode:',
+          lookupRes.errorCode,
+          '| message:',
+          lookupRes.errorMessage
+        );
+        setAuthError(formatAuthLookupError({ code: lookupRes.errorCode, message: lookupRes.errorMessage }));
         setRole(null);
         setCaProfile(null);
         setAdminProfile(null);
         return;
       }
 
-      // Preserve verified CA session from localStorage if email matches (prevents async race/offline wipeout)
+      let matchedCA: CampusAmbassador | null = lookupRes.status === 'found' ? lookupRes.ca : null;
+
+      // Preserve verified CA session from localStorage if normalized email matches
       if (!matchedCA) {
         try {
           const savedStr = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -184,13 +201,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Default unassigned (query succeeded with no matching CA)
+      // Empty snapshots: explicitly treat as not registered
       setAuthError(formatEmptyLookupReason(emailLower));
       setRole(null);
       setCaProfile(null);
       setAdminProfile(null);
     } catch (err: any) {
-      console.error('Error fetching user profile:', err?.code, err?.message, err);
+      console.error('[FirebaseAuth/Firestore] loadUserProfile errorCode:', err?.code || 'unknown', '| message:', err?.message, err);
       setAuthError(prev => prev || formatAuthLookupError(err));
       throw err;
     }
@@ -305,14 +322,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Check Campus Ambassadors ONLY via getCampusAmbassadorByGoogleEmail
-      let matchedCA: CampusAmbassador | null = null;
-      try {
-        matchedCA = await getCampusAmbassadorByGoogleEmail(googleEmail);
-      } catch (queryErr: any) {
-        console.error('Google Sign-in CA lookup error:', queryErr?.code, queryErr?.message, queryErr);
-        const reason = formatAuthLookupError(queryErr);
-        setAuthError(reason);
+      // Check Campus Ambassadors via precise non-recursive lookup
+      const lookupRes = await lookupCampusAmbassadorByEmail(googleEmail);
+      if (lookupRes.status === 'permission_denied' || lookupRes.status === 'error') {
+        console.error(
+          '[FirebaseAuth/Firestore] Google Sign-in CA lookup failed - errorCode:',
+          lookupRes.errorCode,
+          '| message:',
+          lookupRes.errorMessage
+        );
+        setAuthError(formatAuthLookupError({ code: lookupRes.errorCode, message: lookupRes.errorMessage }));
         setCurrentUser(result.user);
         setRole(null);
         setCaProfile(null);
@@ -320,7 +339,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      if (matchedCA) {
+      if (lookupRes.status === 'found') {
+        const matchedCA = lookupRes.ca;
         if (matchedCA.allowGoogleLogin === false) {
           await signOut(auth).catch(() => {});
           throw new Error('Google Sign-in is not enabled for this Ambassador account. Please log in using your CA ID/Email and Password.');
@@ -336,7 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const caUser = {
           uid: result.user.uid || matchedCA.uid,
-          email: matchedCA.email,
+          email: (matchedCA.email || googleEmail).toLowerCase().trim(),
           displayName: matchedCA.name
         };
 
@@ -357,14 +377,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Query succeeded with no matching CA: surface Access Restricted screen with exact reason
+      // Empty snapshots: explicitly surface not registered reason
+      console.warn('[FirebaseAuth/Firestore] Google account not registered as CA:', googleEmail);
       setAuthError(formatEmptyLookupReason(googleEmail));
       setCurrentUser(result.user);
       setRole(null);
       setCaProfile(null);
       setAdminProfile(null);
     } catch (error: any) {
-      console.error('Google Sign-in error:', error?.code, error?.message, error);
+      console.error('[FirebaseAuth] Google Sign-In errorCode:', error?.code || 'unknown', '| message:', error?.message, error);
       const errCode = error?.code || '';
       const errMsg = (error?.message || '').toLowerCase();
       if (
@@ -434,16 +455,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const upperId = cleanId.toUpperCase();
 
       // 1. SUPER ADMIN CHECK
-      if (lowerId === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+      if (lowerId === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim()) {
         if (pass.trim().length > 0) {
           const adminUser = {
             uid: 'admin_ayush_superadmin',
-            email: BOOTSTRAP_ADMIN_EMAIL,
+            email: BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim(),
             displayName: 'Super Administrator'
           };
           const adminData: AdminUser = {
             uid: adminUser.uid,
-            email: BOOTSTRAP_ADMIN_EMAIL,
+            email: BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim(),
             name: 'Super Administrator',
             role: 'superadmin',
             createdAt: new Date().toISOString(),
@@ -451,9 +472,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
 
           try {
-            await signInWithEmailAndPassword(auth, BOOTSTRAP_ADMIN_EMAIL, pass);
-          } catch (e) {
-            // Continues with session
+            await signInWithEmailAndPassword(auth, BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim(), pass);
+          } catch (e: any) {
+            console.error('[FirebaseAuth] Super Admin email/password sign-in errorCode:', e?.code || 'unknown', '| message:', e?.message);
           }
 
           localStorage.setItem(
@@ -476,14 +497,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 2. CAMPUS AMBASSADOR CHECK (CROSS-BROWSER FIREBASE AUTH + LEGACY FALLBACK)
-      let lookupEmail = lowerId.includes('@') ? lowerId : '';
+      // 2. CAMPUS AMBASSADOR CHECK (precise, non-recursive lookups only)
+      let lookupEmail = lowerId.includes('@') ? lowerId.toLowerCase().trim() : '';
       let caRecord: CampusAmbassador | null = null;
+      let lookupDeniedError: string | null = null;
+      let lastAuthErrorCode: string | null = null;
 
-      // Resolve CA ID or Email via caDirectory (works unauthenticated across any browser/device)
+      // Step A: Resolve CA ID or Email via direct caDirectory getDoc (works across any browser/device)
       const dirEntry = await lookupCaDirectoryByCaId(cleanId);
       if (dirEntry) {
-        lookupEmail = lookupEmail || dirEntry.email;
+        lookupEmail = lookupEmail || (dirEntry.email || '').toLowerCase().trim();
         for (const targetDb of ACTIVE_FIRESTORE_DB_ID !== '(default)' ? [db, defaultDb] : [db]) {
           try {
             const snap = await getDoc(doc(targetDb, 'campusAmbassadors', dirEntry.uid));
@@ -491,50 +514,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               caRecord = { ...snap.data(), uid: snap.id } as CampusAmbassador;
               break;
             }
-          } catch {
-            // continue
+          } catch (docErr: any) {
+            console.error('[Firestore] Direct CA doc lookup errorCode:', docErr?.code || 'unknown', '| message:', docErr?.message);
+            if (docErr?.code === 'permission-denied') {
+              lookupDeniedError = formatAuthLookupError(docErr);
+            }
           }
         }
       }
 
-      // Sign in via Firebase Auth if we have an email
+      // Step B: Authenticate with Firebase Auth if we have an email, then run precise query if needed
       if (lookupEmail) {
         try {
           await signInWithEmailAndPassword(auth, lookupEmail, pass.trim());
-          caRecord = caRecord || (await getCampusAmbassadorByGoogleEmail(lookupEmail));
+          if (!caRecord) {
+            const lookupRes = await lookupCampusAmbassadorByEmail(lookupEmail);
+            if (lookupRes.status === 'found') {
+              caRecord = lookupRes.ca;
+            } else if (lookupRes.status === 'permission_denied' || lookupRes.status === 'error') {
+              console.error('[FirebaseAuth/Firestore] Credential CA lookup errorCode:', lookupRes.errorCode, '| message:', lookupRes.errorMessage);
+              lookupDeniedError = formatAuthLookupError({
+                code: lookupRes.errorCode,
+                message: lookupRes.errorMessage
+              });
+            }
+          }
         } catch (authErr: any) {
-          // If legacy CA wasn't provisioned in Firebase Auth yet, verify stored doc & auto-provision
+          lastAuthErrorCode = authErr?.code || 'unknown';
+          console.error('[FirebaseAuth] signInWithEmailAndPassword errorCode:', lastAuthErrorCode, '| message:', authErr?.message, authErr);
+
+          // If CA record was resolved via caDirectory and password matches stored initialPassword, provision Firebase Auth
           if (caRecord && (caRecord.initialPassword?.trim() === pass.trim() || pass.trim() === 'Ambassador@2026')) {
             try {
               await createUserWithEmailAndPassword(auth, lookupEmail, pass.trim());
-            } catch {
-              // continue with session if Firebase Auth already has a different provider or password
-            }
-          } else if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/user-not-found') {
-            const allCAs = await getAllCampusAmbassadors();
-            const cachedMatch = allCAs.find(
-              c =>
-                c.email?.toLowerCase().trim() === lowerId ||
-                c.caId?.toUpperCase().trim() === upperId ||
-                (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
-            );
-            if (cachedMatch) {
-              caRecord = cachedMatch;
+            } catch (provisionErr: any) {
+              console.error('[FirebaseAuth] createUserWithEmailAndPassword errorCode:', provisionErr?.code || 'unknown', '| message:', provisionErr?.message);
             }
           }
         }
-      }
-
-      // Fallback check across cached CAs (e.g. demo accounts or same-device creation)
-      if (!caRecord) {
-        const allCAs = await getAllCampusAmbassadors();
-        caRecord =
-          allCAs.find(
-            c =>
-              c.email?.toLowerCase().trim() === lowerId ||
-              c.caId?.toUpperCase().trim() === upperId ||
-              (c.googleEmail && c.googleEmail.toLowerCase().trim() === lowerId)
-          ) || null;
       }
 
       if (caRecord) {
@@ -552,20 +569,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Ensure Firebase Auth session exists for Firestore writes
         if (!auth.currentUser && caRecord.email) {
+          const normalizedCaEmail = caRecord.email.toLowerCase().trim();
           try {
-            await signInWithEmailAndPassword(auth, caRecord.email.toLowerCase().trim(), pass.trim());
-          } catch {
+            await signInWithEmailAndPassword(auth, normalizedCaEmail, pass.trim());
+          } catch (signInErr: any) {
+            console.error('[FirebaseAuth] Post-verify signInWithEmailAndPassword errorCode:', signInErr?.code || 'unknown', '| message:', signInErr?.message);
             try {
-              await createUserWithEmailAndPassword(auth, caRecord.email.toLowerCase().trim(), pass.trim());
-            } catch {
-              // ignore if email belongs to another auth provider
+              await createUserWithEmailAndPassword(auth, normalizedCaEmail, pass.trim());
+            } catch (createErr: any) {
+              console.error('[FirebaseAuth] Post-verify createUserWithEmailAndPassword errorCode:', createErr?.code || 'unknown', '| message:', createErr?.message);
             }
           }
         }
 
         const caUser = {
           uid: auth.currentUser?.uid || caRecord.uid,
-          email: caRecord.email,
+          email: (caRecord.email || lookupEmail).toLowerCase().trim(),
           displayName: caRecord.name
         };
 
@@ -586,11 +605,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true };
       }
 
+      if (lookupDeniedError) {
+        return {
+          success: false,
+          error: lookupDeniedError
+        };
+      }
+
+      if (lastAuthErrorCode === 'auth/wrong-password' || lastAuthErrorCode === 'auth/invalid-credential') {
+        return {
+          success: false,
+          error: `Invalid credentials (${lastAuthErrorCode}). If you are using a CA ID, verify the account is synced in Firestore or sign in with Google.`
+        };
+      }
+
       return {
         success: false,
-        error: `No registered Campus Ambassador account found for "${cleanId}". Please check your email or CA ID.`
+        error: `No registered Campus Ambassador account found for "${cleanId}" in Firestore database "${ACTIVE_FIRESTORE_DB_ID}". Please check your email or CA ID.`
       };
     } catch (err: any) {
+      console.error('[FirebaseAuth] loginWithCredentials unexpected errorCode:', err?.code || 'unknown', '| message:', err?.message, err);
       return { success: false, error: err.message || 'Login failed.' };
     } finally {
       isManualAuthInProgressRef.current = false;

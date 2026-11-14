@@ -867,36 +867,65 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   return cached;
 }
 
-async function queryCaInDatabase(
-  targetDb: typeof db,
-  emailLower: string
-): Promise<{ ca: CampusAmbassador | null; error: any }> {
-  let firstError: any = null;
+export type CaLookupResult =
+  | { status: 'found'; ca: CampusAmbassador }
+  | { status: 'not_registered'; reason: string }
+  | { status: 'permission_denied'; errorCode: string; errorMessage: string }
+  | { status: 'error'; errorCode: string; errorMessage: string };
 
+async function queryCaInSingleDatabase(
+  targetDb: typeof db,
+  dbLabel: string,
+  emailLower: string
+): Promise<CaLookupResult> {
+  let firstPermError: any = null;
+  let firstOtherError: any = null;
+
+  // 1. Precise query on googleEmail == emailLower
   try {
-    const qGoogle = query(collection(targetDb, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
+    const qGoogle = query(
+      collection(targetDb, 'campusAmbassadors'),
+      where('googleEmail', '==', emailLower),
+      limit(1)
+    );
     const snapGoogle = await getDocs(qGoogle);
     if (!snapGoogle.empty) {
       const d = snapGoogle.docs[0];
-      return { ca: { ...d.data(), uid: d.id } as CampusAmbassador, error: null };
+      return { status: 'found', ca: { ...d.data(), uid: d.id } as CampusAmbassador };
     }
   } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (googleEmail) error:', err?.code, err?.message, err);
-    firstError = firstError || err;
+    const code = err?.code || 'unknown';
+    console.error(`[Firestore] campusAmbassadors googleEmail query error (${dbLabel}):`, code, err?.message, err);
+    if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+      firstPermError = firstPermError || err;
+    } else {
+      firstOtherError = firstOtherError || err;
+    }
   }
 
+  // 2. Precise query on email == emailLower
   try {
-    const qEmail = query(collection(targetDb, 'campusAmbassadors'), where('email', '==', emailLower));
+    const qEmail = query(
+      collection(targetDb, 'campusAmbassadors'),
+      where('email', '==', emailLower),
+      limit(1)
+    );
     const snapEmail = await getDocs(qEmail);
     if (!snapEmail.empty) {
       const d = snapEmail.docs[0];
-      return { ca: { ...d.data(), uid: d.id } as CampusAmbassador, error: null };
+      return { status: 'found', ca: { ...d.data(), uid: d.id } as CampusAmbassador };
     }
   } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (email) error:', err?.code, err?.message, err);
-    firstError = firstError || err;
+    const code = err?.code || 'unknown';
+    console.error(`[Firestore] campusAmbassadors email query error (${dbLabel}):`, code, err?.message, err);
+    if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+      firstPermError = firstPermError || err;
+    } else {
+      firstOtherError = firstOtherError || err;
+    }
   }
 
+  // 3. Single-document direct lookup via caDirectory/{emailLower} -> campusAmbassadors/{uid}
   try {
     const dirKey = sanitizeDirectoryKey(emailLower);
     const dirSnap = await getDoc(doc(targetDb, 'caDirectory', dirKey));
@@ -905,63 +934,101 @@ async function queryCaInDatabase(
       if (dirData?.uid) {
         const docSnap = await getDoc(doc(targetDb, 'campusAmbassadors', dirData.uid));
         if (docSnap.exists()) {
-          return { ca: { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador, error: null };
+          return { status: 'found', ca: { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador };
         }
       }
     }
   } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail (caDirectory) error:', err?.code, err?.message, err);
-    firstError = firstError || err;
-  }
-
-  return { ca: null, error: firstError };
-}
-
-/**
- * Login-time lookup: finds ONLY the CA whose Google email or primary email matches.
- * Uses where() queries + caDirectory getDoc fallback so Firestore rules allow it for a signed-in CA
- * without exposing the whole collection.
- */
-export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
-  const emailLower = email.toLowerCase().trim();
-  if (!emailLower) return null;
-
-  const primaryRes = await queryCaInDatabase(db, emailLower);
-  if (primaryRes.ca) {
-    return primaryRes.ca;
-  }
-
-  let fallbackRes: { ca: CampusAmbassador | null; error: any } = { ca: null, error: null };
-  if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
-    fallbackRes = await queryCaInDatabase(defaultDb, emailLower);
-    if (fallbackRes.ca) {
-      return fallbackRes.ca;
+    const code = err?.code || 'unknown';
+    console.error(`[Firestore] caDirectory getDoc error (${dbLabel}):`, code, err?.message, err);
+    if (code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('permission')) {
+      firstPermError = firstPermError || err;
+    } else {
+      firstOtherError = firstOtherError || err;
     }
   }
 
-  const finalError = primaryRes.error || fallbackRes.error;
-  if (finalError) {
-    throw finalError;
+  if (firstPermError) {
+    return {
+      status: 'permission_denied',
+      errorCode: firstPermError?.code || 'permission-denied',
+      errorMessage: firstPermError?.message || 'Missing or insufficient permissions.'
+    };
   }
 
-  // Fallback: local cache (only helps on the device where the CA was created)
-  const deletedUids = getDeletedCaUidSet();
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
-  const cachedMatch =
-    cached.find(
-      c =>
-        c.email?.toLowerCase().trim() === emailLower ||
-        (c.googleEmail && c.googleEmail.toLowerCase().trim() === emailLower)
-    ) || null;
-
-  if (!cachedMatch) {
-    console.error('Firestore CA lookup returned 0 matching documents:', {
-      queriedEmail: emailLower,
-      databaseId: ACTIVE_FIRESTORE_DB_ID
-    });
+  if (firstOtherError) {
+    return {
+      status: 'error',
+      errorCode: firstOtherError?.code || 'firestore-error',
+      errorMessage: firstOtherError?.message || 'Firestore query failed.'
+    };
   }
 
-  return cachedMatch;
+  return {
+    status: 'not_registered',
+    reason: `No matching Campus Ambassador document found for "${emailLower}" in database "${dbLabel}".`
+  };
+}
+
+/**
+ * Login-time lookup: finds ONLY the CA whose normalized Google email or primary email matches.
+ * Uses precise, non-recursive limit(1) queries + direct getDoc, explicitly distinguishing
+ * empty snapshots ('not_registered') from 'permission_denied'.
+ */
+export async function lookupCampusAmbassadorByEmail(email: string): Promise<CaLookupResult> {
+  const emailLower = (email || '').toLowerCase().trim();
+  if (!emailLower) {
+    return { status: 'not_registered', reason: 'No email address was provided by Google Sign-In.' };
+  }
+
+  const primaryRes = await queryCaInSingleDatabase(db, ACTIVE_FIRESTORE_DB_ID, emailLower);
+  if (primaryRes.status === 'found') {
+    return primaryRes;
+  }
+
+  let fallbackRes: CaLookupResult | null = null;
+  if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+    fallbackRes = await queryCaInSingleDatabase(defaultDb, '(default)', emailLower);
+    if (fallbackRes.status === 'found') {
+      return fallbackRes;
+    }
+  }
+
+  if (primaryRes.status === 'permission_denied') {
+    return primaryRes;
+  }
+  if (fallbackRes?.status === 'permission_denied') {
+    return fallbackRes;
+  }
+  if (primaryRes.status === 'error') {
+    return primaryRes;
+  }
+  if (fallbackRes?.status === 'error') {
+    return fallbackRes;
+  }
+
+  console.warn('[Firestore] CA lookup returned empty snapshots (not registered):', {
+    queriedEmail: emailLower,
+    databaseId: ACTIVE_FIRESTORE_DB_ID
+  });
+
+  return {
+    status: 'not_registered',
+    reason: `No matching Campus Ambassador document found for "${emailLower}" in Firestore database "${ACTIVE_FIRESTORE_DB_ID}".`
+  };
+}
+
+export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
+  const res = await lookupCampusAmbassadorByEmail(email);
+  if (res.status === 'found') {
+    return res.ca;
+  }
+  if (res.status === 'permission_denied' || res.status === 'error') {
+    const err: any = new Error(res.errorMessage);
+    err.code = res.errorCode;
+    throw err;
+  }
+  return null;
 }
 
 export async function createCampusAmbassadorAccount(

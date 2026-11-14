@@ -5,43 +5,90 @@ import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { CaDashboard } from './components/CaDashboard';
 import { VerificationPage } from './components/VerificationPage';
+import { PrivacyPolicyPage } from './components/PrivacyPolicyPage';
+import { TermsOfServicePage } from './components/TermsOfServicePage';
 import { ShieldAlert, Award, LogOut } from 'lucide-react';
+
+type PublicView = 'app' | 'verify' | 'privacy' | 'terms';
+
+function resolveRouteFromLocation(): { view: PublicView; certId: string } {
+  if (typeof window === 'undefined') {
+    return { view: 'app', certId: '' };
+  }
+  const urlParams = new URLSearchParams(window.location.search);
+  const verifyParam = urlParams.get('verify');
+  const rawPath = window.location.pathname.replace(/\/+$/, '') || '/';
+
+  if (rawPath === '/privacy') {
+    return { view: 'privacy', certId: '' };
+  }
+  if (rawPath === '/terms') {
+    return { view: 'terms', certId: '' };
+  }
+  if (verifyParam) {
+    return { view: 'verify', certId: verifyParam };
+  }
+  if (rawPath.startsWith('/verify/')) {
+    const idFromPath = rawPath.replace('/verify/', '');
+    if (idFromPath) {
+      return { view: 'verify', certId: idFromPath };
+    }
+  }
+  return { view: 'app', certId: '' };
+}
 
 function AppContent() {
   const { currentUser, role, caProfile, adminProfile, isLoading, authError, logout } = useAuth();
-  const [currentView, setCurrentView] = useState<'app' | 'verify'>('app');
-  const [verificationCertId, setVerificationCertId] = useState<string>('');
+  const initialRoute = resolveRouteFromLocation();
+  const [currentView, setCurrentView] = useState<PublicView>(initialRoute.view);
+  const [verificationCertId, setVerificationCertId] = useState<string>(initialRoute.certId);
 
-  // Check URL params for verification link: ?verify=GSAP-XXXX
-  useEffect(() => {
+  const navigateTo = (path: string, view: PublicView) => {
+    setCurrentView(view);
     if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const verifyParam = urlParams.get('verify');
-      const path = window.location.pathname;
-
-      if (verifyParam) {
-        setVerificationCertId(verifyParam);
-        setCurrentView('verify');
-      } else if (path.startsWith('/verify/')) {
-        const idFromPath = path.replace('/verify/', '');
-        if (idFromPath) {
-          setVerificationCertId(idFromPath);
-          setCurrentView('verify');
-        }
+      if (window.history.pushState) {
+        window.history.pushState({}, document.title, path);
       }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+  };
+
+  // Sync URL params and browser back/forward navigation for public routes (/privacy, /terms, /verify/:id)
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const next = resolveRouteFromLocation();
+      setCurrentView(next.view);
+      setVerificationCertId(next.certId);
+    };
+    syncFromUrl();
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
   }, []);
+
+  if (currentView === 'privacy') {
+    return (
+      <PrivacyPolicyPage
+        onNavigateHome={() => navigateTo('/', 'app')}
+        onNavigateTerms={() => navigateTo('/terms', 'terms')}
+      />
+    );
+  }
+
+  if (currentView === 'terms') {
+    return (
+      <TermsOfServicePage
+        onNavigateHome={() => navigateTo('/', 'app')}
+        onNavigatePrivacy={() => navigateTo('/privacy', 'privacy')}
+      />
+    );
+  }
 
   if (currentView === 'verify') {
     return (
       <VerificationPage
         initialCertId={verificationCertId}
         onBackToApp={() => {
-          setCurrentView('app');
-          // Clear query params without full page reload
-          if (window.history.pushState) {
-            window.history.pushState({}, document.title, window.location.pathname);
-          }
+          navigateTo('/', 'app');
         }}
       />
     );
@@ -107,14 +154,16 @@ function AppContent() {
 
     return (
       <LoginPage
-        onGoToVerify={() => setCurrentView('verify')}
+        onGoToVerify={() => navigateTo('/verify', 'verify')}
+        onGoToPrivacy={() => navigateTo('/privacy', 'privacy')}
+        onGoToTerms={() => navigateTo('/terms', 'terms')}
       />
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
-      <Navbar onGoToVerify={() => setCurrentView('verify')} />
+      <Navbar onGoToVerify={() => navigateTo('/verify', 'verify')} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {role === 'superadmin' || role === 'admin' ? (
@@ -134,8 +183,30 @@ function AppContent() {
         )}
       </main>
 
-      <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-400">
-        Campus Ambassador System &bull; Certificate Management Platform
+      <footer className="bg-white border-t border-gray-200 py-4 px-4 text-center text-xs text-gray-400 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+        <span>Campus Ambassador System &bull; Certificate Management Platform</span>
+        <span>&bull;</span>
+        <a
+          href="/privacy"
+          onClick={(e) => {
+            e.preventDefault();
+            navigateTo('/privacy', 'privacy');
+          }}
+          className="text-gray-500 hover:text-blue-600 hover:underline"
+        >
+          Privacy Policy
+        </a>
+        <span>&bull;</span>
+        <a
+          href="/terms"
+          onClick={(e) => {
+            e.preventDefault();
+            navigateTo('/terms', 'terms');
+          }}
+          className="text-gray-500 hover:text-blue-600 hover:underline"
+        >
+          Terms of Service
+        </a>
       </footer>
     </div>
   );

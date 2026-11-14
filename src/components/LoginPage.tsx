@@ -4,9 +4,15 @@ import { Mail, Lock, ArrowRight, Award, AlertCircle, Search, Eye, EyeOff } from 
 
 interface LoginPageProps {
   onGoToVerify: () => void;
+  onGoToPrivacy: () => void;
+  onGoToTerms: () => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onGoToVerify,
+  onGoToPrivacy,
+  onGoToTerms
+}) => {
   const { loginWithGoogle, loginWithCredentials, loginDirectSuperAdmin, isLoading } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -88,7 +94,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
               Campus Ambassador System
             </h1>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Manage Campus Ambassador records, issue official student certificates, and provide public verification.
+            </p>
+            <p className="text-[11px] text-gray-400">
               Sign in to your Campus Ambassador or Super Admin account
             </p>
           </div>
@@ -206,8 +215,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
       </div>
 
       {/* Footer */}
-      <footer className="text-center text-xs text-gray-400 py-3">
-        Campus Ambassador System &bull; Secure Certificate & Identity Management Platform
+      <footer className="text-center text-xs text-gray-400 py-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+        <span>Campus Ambassador System &bull; Certificate Issuance &amp; Verification Platform</span>
+        <span>&bull;</span>
+        <a
+          href="/privacy"
+          onClick={(e) => {
+            e.preventDefault();
+            onGoToPrivacy();
+          }}
+          className="text-gray-500 hover:text-blue-600 hover:underline"
+        >
+          Privacy Policy
+        </a>
+        <span>&bull;</span>
+        <a
+          href="/terms"
+          onClick={(e) => {
+            e.preventDefault();
+            onGoToTerms();
+          }}
+          className="text-gray-500 hover:text-blue-600 hover:underline"
+        >
+          Terms of Service
+        </a>
       </footer>
 
     </div>

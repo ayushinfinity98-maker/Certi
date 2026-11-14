@@ -868,7 +868,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
               System-Wide Issued Certificates ({allCertificates.length})
             </h3>
             <p className="text-xs text-gray-500 mb-4">
-              All officially issued Google Student Ambassador Program 2026 certificates across all institutions.
+              All officially issued Campus Ambassador System certificates across all institutions.
             </p>
 
             <div className="overflow-x-auto">
@@ -1018,7 +1018,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                 type="button"
                 onClick={() => {
                   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                  const msg = `Google Student Ambassador Portal Login:\n- CA ID: ${credentialsModalCa.caId}\n- Email: ${credentialsModalCa.email}\n- Password: ${credentialsModalCa.initialPassword || 'Ambassador@2026'}\n- Direct Google Sign-In: ${credentialsModalCa.allowGoogleLogin !== false ? 'Enabled (' + (credentialsModalCa.googleEmail || credentialsModalCa.email) + ')' : 'Disabled'}\n- Login URL: ${origin}`;
+                  const msg = `Campus Ambassador System Portal Login:\n- CA ID: ${credentialsModalCa.caId}\n- Email: ${credentialsModalCa.email}\n- Password: ${credentialsModalCa.initialPassword || 'Ambassador@2026'}\n- Direct Google Sign-In: ${credentialsModalCa.allowGoogleLogin !== false ? 'Enabled (' + (credentialsModalCa.googleEmail || credentialsModalCa.email) + ')' : 'Disabled'}\n- Login URL: ${origin}`;
                   navigator.clipboard.writeText(msg);
                   setCopiedCredentials(true);
                   setTimeout(() => setCopiedCredentials(false), 2500);

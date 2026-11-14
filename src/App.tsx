@@ -8,7 +8,7 @@ import { VerificationPage } from './components/VerificationPage';
 import { ShieldAlert, Award, LogOut } from 'lucide-react';
 
 function AppContent() {
-  const { currentUser, role, caProfile, adminProfile, isLoading, logout } = useAuth();
+  const { currentUser, role, caProfile, adminProfile, isLoading, authError, logout } = useAuth();
   const [currentView, setCurrentView] = useState<'app' | 'verify'>('app');
   const [verificationCertId, setVerificationCertId] = useState<string>('');
 
@@ -60,7 +60,7 @@ function AppContent() {
         </div>
         <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
         <p className="text-xs text-gray-500 font-medium tracking-wide">
-          Loading Campus Ambassador Certificate Management System...
+          Loading Campus Ambassador System...
         </p>
       </div>
     );
@@ -79,11 +79,17 @@ function AppContent() {
             <h2 className="text-lg font-bold text-gray-900">
               Access Restricted
             </h2>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Your Google account <span className="font-semibold text-gray-900 font-mono">"{currentUser.email}"</span> is not registered as an authorized Campus Ambassador or Super Administrator for the Google Student Ambassador Program 2026.
-            </p>
+            {authError ? (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 leading-relaxed text-left">
+                {authError}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Your Google account <span className="font-semibold text-gray-900 font-mono">"{currentUser.email}"</span> is not registered as an authorized Campus Ambassador or Super Administrator for Campus Ambassador System.
+              </p>
+            )}
             <p className="text-[11px] text-gray-400">
-              Please contact the Super Admin at <span className="font-mono text-blue-600">ayushinfinity98@gmail.com</span> to create your Ambassador account.
+              Please contact the Super Admin at <span className="font-mono text-blue-600">ayushinfinity98@gmail.com</span> for access assistance.
             </p>
             <div className="pt-2">
               <button
@@ -129,7 +135,7 @@ function AppContent() {
       </main>
 
       <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-400">
-        Google Student Ambassador Program 2026 &bull; Production Certificate Management Platform
+        Campus Ambassador System &bull; Certificate Management Platform
       </footer>
     </div>
   );

@@ -95,7 +95,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
                 {student ? 'Edit Student Record' : 'Register New Student'}
               </h3>
               <p className="text-xs text-gray-500">
-                Google Student Ambassador Program 2026
+                Campus Ambassador System
               </p>
             </div>
           </div>

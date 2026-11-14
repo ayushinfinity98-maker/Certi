@@ -39,6 +39,7 @@ interface AuthContextType {
   caProfile: CampusAmbassador | null;
   adminProfile: AdminUser | null;
   isLoading: boolean;
+  authError: string | null;
   isFirestoreConnected: boolean;
   isCloudAuthenticated: boolean;
   isAdminGmailConnected: boolean;
@@ -54,12 +55,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function formatAuthLookupError(err: any): string {
+  const code = err?.code || '';
+  const msg = err?.message || 'Unable to verify your Campus Ambassador profile.';
+  if (code === 'permission-denied' || msg.toLowerCase().includes('permission')) {
+    return `Permission denied: please contact admin (${code ? code + ': ' : ''}${msg})`;
+  }
+  return code ? `${code}: ${msg}` : msg;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [role, setRole] = useState<'superadmin' | 'admin' | 'ca' | null>(null);
   const [caProfile, setCaProfile] = useState<CampusAmbassador | null>(null);
   const [adminProfile, setAdminProfile] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(true);
   const [isCloudAuthenticated, setIsCloudAuthenticated] = useState<boolean>(Boolean(auth.currentUser));
   const [isAdminGmailConnected, setIsAdminGmailConnected] = useState<boolean>(isAdminGmailAuthorized());
@@ -83,8 +94,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadUserProfile = async (user: any) => {
     try {
+      setAuthError(null);
       const emailLower = (user.email || '').toLowerCase().trim();
-      const isSuperAdminEmail = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+      const isSuperAdminEmail = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim();
 
       // 1. SUPER ADMIN CHECK
       if (isSuperAdminEmail) {
@@ -109,8 +121,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // 2. CAMPUS AMBASSADOR CHECK (ALL CAs FROM FIRESTORE + CACHE)
-      let matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
+      // 2. CAMPUS AMBASSADOR CHECK (ONLY via getCampusAmbassadorByGoogleEmail)
+      let matchedCA: CampusAmbassador | null = null;
+      try {
+        matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
+      } catch (err: any) {
+        console.error('loadUserProfile Firestore query error:', err?.code, err?.message, err);
+        setAuthError(formatAuthLookupError(err));
+        setRole(null);
+        setCaProfile(null);
+        setAdminProfile(null);
+        return;
+      }
 
       // Preserve verified CA session from localStorage if email matches (prevents async race/offline wipeout)
       if (!matchedCA) {
@@ -135,10 +157,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (matchedCA) {
         if (matchedCA.status === 'suspended') {
-          throw new Error('Your Campus Ambassador account is suspended by the Super Administrator.');
+          const msg = 'Your Campus Ambassador account is suspended by the Super Administrator.';
+          setAuthError(msg);
+          throw new Error(msg);
         }
         if (matchedCA.status === 'deactivated') {
-          throw new Error('Your Campus Ambassador account is currently deactivated.');
+          const msg = 'Your Campus Ambassador account is currently deactivated.';
+          setAuthError(msg);
+          throw new Error(msg);
         }
 
         setRole('ca');
@@ -147,12 +173,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Default unassigned
+      // Default unassigned (query succeeded with no matching CA)
       setRole(null);
       setCaProfile(null);
       setAdminProfile(null);
-    } catch (err) {
-      console.error('Error fetching user profile:', err);
+    } catch (err: any) {
+      console.error('Error fetching user profile:', err?.code, err?.message, err);
+      setAuthError(prev => prev || formatAuthLookupError(err));
       throw err;
     }
   };
@@ -225,6 +252,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const loginWithGoogle = async () => {
     setIsLoading(true);
+    setAuthError(null);
     isManualAuthInProgressRef.current = true;
     try {
       const provider = new GoogleAuthProvider();
@@ -233,7 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const googleEmail = (result.user.email || '').toLowerCase().trim();
 
       // Check Super Admin
-      if (googleEmail === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+      if (googleEmail === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim()) {
         const adminUser = {
           uid: result.user.uid,
           email: BOOTSTRAP_ADMIN_EMAIL,
@@ -265,8 +293,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Check Campus Ambassadors by Google Email or Primary Email
-      const matchedCA = await getCampusAmbassadorByGoogleEmail(googleEmail);
+      // Check Campus Ambassadors ONLY via getCampusAmbassadorByGoogleEmail
+      let matchedCA: CampusAmbassador | null = null;
+      try {
+        matchedCA = await getCampusAmbassadorByGoogleEmail(googleEmail);
+      } catch (queryErr: any) {
+        console.error('Google Sign-in CA lookup error:', queryErr?.code, queryErr?.message, queryErr);
+        const reason = formatAuthLookupError(queryErr);
+        setAuthError(reason);
+        setCurrentUser(result.user);
+        setRole(null);
+        setCaProfile(null);
+        setAdminProfile(null);
+        return;
+      }
 
       if (matchedCA) {
         if (matchedCA.allowGoogleLogin === false) {
@@ -305,11 +345,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // If user is neither Super Admin nor recognized CA, sign out so LoginPage shows clear error
-      await signOut(auth).catch(() => {});
-      throw new Error(
-        `The Google account "${googleEmail}" is not registered as an authorized Campus Ambassador. Please ask the Super Admin (${BOOTSTRAP_ADMIN_EMAIL}) to add your Google email in the Admin Dashboard.`
-      );
+      // Query succeeded with no matching CA: surface Access Restricted screen cleanly
+      setAuthError(null);
+      setCurrentUser(result.user);
+      setRole(null);
+      setCaProfile(null);
+      setAdminProfile(null);
     } catch (error: any) {
       console.error('Google Sign-in error:', error?.code, error?.message, error);
       const errCode = error?.code || '';
@@ -553,6 +594,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore
       }
       localStorage.removeItem(SESSION_STORAGE_KEY);
+      setAuthError(null);
       setIsCloudAuthenticated(false);
       setCurrentUser(null);
       setRole(null);
@@ -577,6 +619,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         caProfile,
         adminProfile,
         isLoading,
+        authError,
         isFirestoreConnected,
         isCloudAuthenticated,
         isAdminGmailConnected,

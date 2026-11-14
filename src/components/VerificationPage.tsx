@@ -85,7 +85,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
         <div className="text-center mb-8">
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 mb-3">
             <Award className="w-3.5 h-3.5 mr-1.5 text-blue-600" />
-            Official Google Student Ambassador Program 2026
+            Campus Ambassador System
           </span>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
             Verify Certificate Authenticity
@@ -285,7 +285,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
 
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-500">
-        Google Student Ambassador Program 2026 &bull; Official Digital Verification Service
+        Campus Ambassador System &bull; Official Digital Verification Service
       </footer>
     </div>
   );

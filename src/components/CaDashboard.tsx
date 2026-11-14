@@ -204,7 +204,7 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
             </div>
             <p className="text-xs text-gray-500 flex items-center mt-0.5">
               <School className="w-3.5 h-3.5 mr-1 text-gray-400" />
-              {ca.college} &bull; Google Student Ambassador Program 2026
+              {ca.college} &bull; Campus Ambassador System
             </p>
           </div>
         </div>

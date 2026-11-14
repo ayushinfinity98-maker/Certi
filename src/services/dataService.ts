@@ -799,19 +799,21 @@ export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
  * without exposing the whole collection.
  */
 export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<CampusAmbassador | null> {
-  const rawTrimmed = email.trim();
-  const emailLower = rawTrimmed.toLowerCase();
+  const emailLower = email.toLowerCase().trim();
   if (!emailLower) return null;
 
+  let snapGoogle;
   try {
     const qGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
-    const snapGoogle = await getDocs(qGoogle);
-    if (!snapGoogle.empty) {
-      const d = snapGoogle.docs[0];
-      return { ...d.data(), uid: d.id } as CampusAmbassador;
-    }
-  } catch (error) {
-    console.warn('Firestore googleEmail query notice:', error);
+    snapGoogle = await getDocs(qGoogle);
+  } catch (err: any) {
+    console.error('Firestore getCampusAmbassadorByGoogleEmail error:', err?.code, err?.message, err);
+    throw err;
+  }
+
+  if (!snapGoogle.empty) {
+    const d = snapGoogle.docs[0];
+    return { ...d.data(), uid: d.id } as CampusAmbassador;
   }
 
   try {
@@ -821,27 +823,8 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
       const d = snapEmail.docs[0];
       return { ...d.data(), uid: d.id } as CampusAmbassador;
     }
-  } catch (error) {
-    console.warn('Firestore email query notice:', error);
-  }
-
-  if (rawTrimmed !== emailLower) {
-    try {
-      const qRawGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', rawTrimmed));
-      const snapRawGoogle = await getDocs(qRawGoogle);
-      if (!snapRawGoogle.empty) {
-        const d = snapRawGoogle.docs[0];
-        return { ...d.data(), uid: d.id } as CampusAmbassador;
-      }
-      const qRawEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', rawTrimmed));
-      const snapRawEmail = await getDocs(qRawEmail);
-      if (!snapRawEmail.empty) {
-        const d = snapRawEmail.docs[0];
-        return { ...d.data(), uid: d.id } as CampusAmbassador;
-      }
-    } catch (error) {
-      console.warn('Firestore raw email query notice:', error);
-    }
+  } catch (err: any) {
+    console.error('Firestore email fallback query error:', err?.code, err?.message, err);
   }
 
   try {
@@ -853,8 +836,8 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
         return { ...docSnap.data(), uid: docSnap.id } as CampusAmbassador;
       }
     }
-  } catch (error) {
-    console.warn('Firestore caDirectory lookup notice:', error);
+  } catch (err: any) {
+    console.error('Firestore caDirectory lookup error:', err?.code, err?.message, err);
   }
 
   // Fallback: local cache (only helps on the device where the CA was created)

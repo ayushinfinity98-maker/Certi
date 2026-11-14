@@ -60,7 +60,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
           </div>
           <div className="h-5 w-[1px] bg-gray-300" />
           <span className="text-xs sm:text-sm font-semibold text-gray-700">
-            Student Ambassador Program 2026
+            Campus Ambassador System
           </span>
         </div>
 
@@ -86,10 +86,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
               <Award className="w-6 h-6" />
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
-              Sign In to Your Account
+              Campus Ambassador System
             </h1>
             <p className="text-xs text-gray-500">
-              Campus Ambassador & Super Admin Certificate Portal
+              Sign in to your Campus Ambassador or Super Admin account
             </p>
           </div>
 
@@ -207,7 +207,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
 
       {/* Footer */}
       <footer className="text-center text-xs text-gray-400 py-3">
-        Google Student Ambassador Program 2026 &bull; Secure Certificate & Identity Management Platform
+        Campus Ambassador System &bull; Secure Certificate & Identity Management Platform
       </footer>
 
     </div>

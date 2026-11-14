@@ -112,7 +112,7 @@ export const BulkIssuanceModal: React.FC<BulkIssuanceModalProps> = ({
                 Bulk Certificate Issuance & Email Dispatch
               </h3>
               <p className="text-xs text-gray-500">
-                Google Student Ambassador Program 2026
+                Campus Ambassador System
               </p>
             </div>
           </div>

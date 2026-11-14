@@ -34,10 +34,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onGoToVerify }) => {
           <div className="h-4 w-[1px] bg-gray-300" />
           <div className="flex flex-col">
             <span className="text-xs sm:text-sm font-bold text-gray-900 leading-tight">
-              Student Ambassador Program 2026
+              Campus Ambassador System
             </span>
             <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
-              Certificate Management System
+              Certificate Management Portal
             </span>
           </div>
         </div>

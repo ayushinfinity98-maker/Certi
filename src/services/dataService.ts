@@ -25,11 +25,37 @@ import { generateScriptSignatureDataUrl } from '../utils/signatureUtils';
  
 // Storage cache keys for absolute persistence ("sara data save rhe")
 const KEY_STUDENTS = 'gsap_students_persistent_cache_v2';
+const KEY_DELETED_STUDENTS = 'gsap_deleted_students_v1';
 const KEY_CAS = 'gsap_cas_persistent_cache_v2';
 const KEY_DELETED_CAS = 'gsap_deleted_cas_v1';
 const KEY_CERTS = 'gsap_certs_persistent_cache_v2';
 const KEY_AUDIT = 'gsap_audit_logs_persistent_cache_v2';
 const KEY_EMAIL_LOGS = 'gsap_email_logs_persistent_cache_v2';
+
+function getDeletedStudentIdSet(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(KEY_DELETED_STUDENTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.filter(v => typeof v === 'string'));
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function markStudentIdsDeleted(ids: string[]): void {
+  if (typeof window === 'undefined' || ids.length === 0) return;
+  const set = getDeletedStudentIdSet();
+  ids.forEach(id => set.add(id));
+  try {
+    localStorage.setItem(KEY_DELETED_STUDENTS, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+}
 
 function getDeletedCaUidSet(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -438,6 +464,42 @@ export function subscribeToCertificates(
   }
 }
 
+export function subscribeToAllStudents(
+  onUpdate: (students: Student[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const deletedIds = getDeletedStudentIdSet();
+  const cached = loadCache<Student[]>(KEY_STUDENTS, [])
+    .filter(s => !deletedIds.has(s.id))
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  if (cached.length > 0) {
+    onUpdate(cached);
+  }
+
+  try {
+    const q = query(collection(db, 'students'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const currentDeleted = getDeletedStudentIdSet();
+        const fromDb = snapshot.docs
+          .map(d => ({ ...d.data(), id: d.id } as Student))
+          .filter(s => !currentDeleted.has(s.id))
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        saveCache(KEY_STUDENTS, fromDb);
+        onUpdate(fromDb);
+      },
+      (error) => {
+        console.warn('Real-time all-students listener warning:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (err: any) {
+    console.warn('Could not attach onSnapshot for all students:', err);
+    return () => {};
+  }
+}
+
 /**
  * CA Student Management
  */
@@ -520,6 +582,7 @@ export async function updateStudent(studentId: string, updates: Partial<Student>
 export async function deleteStudent(studentId: string, caUid: string, caEmail: string): Promise<void> {
   const cachedAll = loadCache<Student[]>(KEY_STUDENTS, []);
   saveCache(KEY_STUDENTS, cachedAll.filter(s => s.id !== studentId));
+  markStudentIdsDeleted([studentId]);
 
   try {
     const ref = doc(db, 'students', studentId);
@@ -529,6 +592,86 @@ export async function deleteStudent(studentId: string, caUid: string, caEmail: s
   }
  
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_DELETED', `Deleted student record ${studentId}`, studentId);
+}
+
+export async function deleteStudentsBulkByAdmin(
+  students: Student[],
+  adminUid: string,
+  adminEmail: string,
+  options?: { deleteCertificate?: boolean }
+): Promise<void> {
+  if (students.length === 0) return;
+
+  if (!auth.currentUser || auth.currentUser.email?.toLowerCase().trim() !== 'ayushinfinity98@gmail.com') {
+    throw new Error('Please connect your Super Admin Google session (ayushinfinity98@gmail.com) first so Firestore allows deleting student records.');
+  }
+
+  const deleteCertificate = Boolean(options?.deleteCertificate);
+  const deletedStudentIds: string[] = [];
+  const deletedCertIds: string[] = [];
+
+  for (const student of students) {
+    await deleteDoc(doc(db, 'students', student.id));
+    if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+      await deleteDoc(doc(defaultDb, 'students', student.id)).catch(() => {});
+    }
+    deletedStudentIds.push(student.id);
+
+    if (deleteCertificate) {
+      if (student.certificateId) {
+        await deleteDoc(doc(db, 'certificates', student.certificateId));
+        if (ACTIVE_FIRESTORE_DB_ID !== '(default)') {
+          await deleteDoc(doc(defaultDb, 'certificates', student.certificateId)).catch(() => {});
+        }
+        deletedCertIds.push(student.certificateId);
+      }
+
+      const logsSnap = await getDocs(query(collection(db, 'emailLogs'), where('studentId', '==', student.id)));
+      await Promise.all(logsSnap.docs.map(d => deleteDoc(d.ref)));
+    }
+  }
+
+  const deletedIdSet = new Set(deletedStudentIds);
+  markStudentIdsDeleted(deletedStudentIds);
+  saveCache(KEY_STUDENTS, loadCache<Student[]>(KEY_STUDENTS, []).filter(s => !deletedIdSet.has(s.id)));
+
+  if (deleteCertificate) {
+    const deletedCertSet = new Set(deletedCertIds);
+    if (deletedCertSet.size > 0) {
+      saveCache(KEY_CERTS, loadCache<Certificate[]>(KEY_CERTS, []).filter(c => !deletedCertSet.has(c.certificateId)));
+    }
+    saveCache(KEY_EMAIL_LOGS, loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []).filter(l => !deletedIdSet.has(l.studentId)));
+  }
+
+  if (students.length === 1) {
+    const s = students[0];
+    await logAuditEvent(
+      adminUid,
+      adminEmail,
+      'admin',
+      'STUDENT_DELETED_BY_ADMIN',
+      `Deleted student ${s.fullName} (${s.email}, CA: ${s.caId})${deleteCertificate && s.certificateId ? ` along with certificate ${s.certificateId}` : ''}`,
+      s.id
+    );
+  } else {
+    await logAuditEvent(
+      adminUid,
+      adminEmail,
+      'admin',
+      'STUDENTS_BULK_DELETED_BY_ADMIN',
+      `Bulk deleted ${students.length} student records${deleteCertificate ? ' along with associated certificates & email logs' : ''}`,
+      deletedStudentIds[0]
+    );
+  }
+}
+
+export async function deleteStudentByAdmin(
+  student: Student,
+  adminUid: string,
+  adminEmail: string,
+  options?: { deleteCertificate?: boolean }
+): Promise<void> {
+  return deleteStudentsBulkByAdmin([student], adminUid, adminEmail, options);
 }
  
 /**

@@ -42,7 +42,9 @@ import {
   subscribeToCertificates,
   syncAllCasToCloud,
   checkCaUsageForDeletion,
-  deleteCampusAmbassador
+  deleteCampusAmbassador,
+  subscribeToAllStudents,
+  deleteStudentsBulkByAdmin
 } from '../services/dataService';
 import { CaModal } from './CaModal';
 import { SignatureModal } from './SignatureModal';
@@ -68,8 +70,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const { isAdminGmailConnected, connectAdminGmail, isCloudAuthenticated, connectCloudAdminSession } = useAuth();
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'forms_roles' | 'templates' | 'certificates' | 'audit'>('cas');
+  const [activeTab, setActiveTab] = useState<'cas' | 'students' | 'designer' | 'forms_roles' | 'templates' | 'certificates' | 'audit'>('cas');
   const [cas, setCas] = useState<CampusAmbassador[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [studentsLoaded, setStudentsLoaded] = useState(false);
   const [metrics, setMetrics] = useState({
     totalCAs: 0,
     activeCAs: 0,
@@ -83,9 +87,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const [allEmailLogs, setAllEmailLogs] = useState<EmailLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Search & Filter
+  // Search & Filter (CAs)
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'deactivated' | 'suspended'>('all');
+
+  // Search, Filter & Selection (All Students)
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [studentCaFilter, setStudentCaFilter] = useState<string>('all');
+  const [studentCertFilter, setStudentCertFilter] = useState<'all' | 'issued' | 'not_issued'>('all');
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
   // Modals state
   const [isCaModalOpen, setIsCaModalOpen] = useState(false);
@@ -105,6 +115,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     studentCount: number;
     certCount: number;
     deleteAssociatedRecords: boolean;
+    error: string | null;
+    isDeleting: boolean;
+  } | null>(null);
+  const [deletingStudentsState, setDeletingStudentsState] = useState<{
+    students: Student[];
+    deleteCertificate: boolean;
     error: string | null;
     isDeleting: boolean;
   } | null>(null);
@@ -142,9 +158,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       setAllCertificates(updatedCerts);
     });
 
+    // Real-time listener for all Students across all CAs
+    const unsubStudents = subscribeToAllStudents((updatedStudents) => {
+      setAllStudents(updatedStudents);
+      setStudentsLoaded(true);
+    });
+
     return () => {
       unsubCas();
       unsubCerts();
+      unsubStudents();
     };
   }, []);
 
@@ -238,6 +261,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
         prev ? { ...prev, isDeleting: false, error: err?.message || 'Failed to delete CA account.' } : null
       );
     }
+  };
+
+  const handleOpenDeleteStudents = (studentsToDelete: Student[]) => {
+    if (studentsToDelete.length === 0) return;
+    setDeletingStudentsState({
+      students: studentsToDelete,
+      deleteCertificate: false,
+      error: null,
+      isDeleting: false
+    });
+  };
+
+  const handleConfirmDeleteStudents = async () => {
+    if (!deletingStudentsState) return;
+    const targets = deletingStudentsState.students;
+    const deleteCertificate = deletingStudentsState.deleteCertificate;
+    setDeletingStudentsState(prev => (prev ? { ...prev, isDeleting: true, error: null } : null));
+    try {
+      await deleteStudentsBulkByAdmin(targets, adminUid, adminEmail, { deleteCertificate });
+      const deletedSet = new Set(targets.map(s => s.id));
+      setAllStudents(prev => prev.filter(s => !deletedSet.has(s.id)));
+      setSelectedStudentIds(prev => {
+        const next = new Set(prev);
+        deletedSet.forEach(id => next.delete(id));
+        return next;
+      });
+      setInspectingCaStudents(prev =>
+        prev ? { ...prev, students: prev.students.filter(s => !deletedSet.has(s.id)) } : null
+      );
+      setDeletingStudentsState(null);
+      setCloudSyncNotice(
+        targets.length === 1
+          ? `Deleted student ${targets[0].fullName} (${targets[0].email})${deleteCertificate && targets[0].certificateId ? ' and their issued certificate' : ''}.`
+          : `Deleted ${targets.length} student records${deleteCertificate ? ' along with associated certificates' : ''}.`
+      );
+      await loadData();
+    } catch (err: any) {
+      setDeletingStudentsState(prev =>
+        prev ? { ...prev, isDeleting: false, error: err?.message || 'Failed to delete student record(s).' } : null
+      );
+    }
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
   };
 
   const handleConnectAdminGmail = async () => {
@@ -378,6 +451,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     return matchesSearch && matchesStatus;
   });
 
+  const caByUid = new Map<string, CampusAmbassador>(cas.map(c => [c.uid, c]));
+  const certById = new Map<string, Certificate>(allCertificates.map(c => [c.certificateId, c]));
+
+  const filteredAllStudents = allStudents.filter(s => {
+    const q = studentSearchQuery.trim().toLowerCase();
+    const caMatch = caByUid.get(s.caUid);
+    const matchesSearch =
+      !q ||
+      (s.fullName || '').toLowerCase().includes(q) ||
+      (s.email || '').toLowerCase().includes(q) ||
+      (s.college || '').toLowerCase().includes(q) ||
+      (s.initiativeName || '').toLowerCase().includes(q) ||
+      (s.certificateId || '').toLowerCase().includes(q) ||
+      (s.caId || '').toLowerCase().includes(q) ||
+      (caMatch?.name || '').toLowerCase().includes(q);
+    const matchesCa = studentCaFilter === 'all' || s.caUid === studentCaFilter || s.caId === studentCaFilter;
+    const matchesCert =
+      studentCertFilter === 'all' ||
+      (studentCertFilter === 'issued' ? s.certificateStatus === 'issued' : s.certificateStatus !== 'issued');
+    return matchesSearch && matchesCa && matchesCert;
+  });
+
+  const allFilteredSelected =
+    filteredAllStudents.length > 0 && filteredAllStudents.every(s => selectedStudentIds.has(s.id));
+
+  const toggleSelectAllFilteredStudents = () => {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        filteredAllStudents.forEach(s => next.delete(s.id));
+      } else {
+        filteredAllStudents.forEach(s => next.add(s.id));
+      }
+      return next;
+    });
+  };
+
   const handleSyncCasToCloud = async () => {
     setIsSyncingCloud(true);
     setCloudSyncNotice(null);
@@ -503,14 +613,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
           <span className="text-[10px] text-gray-500">Authorized to issue certs</span>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('students')}
+          className="text-left bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs hover:border-purple-300 hover:shadow-xs transition cursor-pointer"
+          title="View all students across all campuses"
+        >
           <div className="flex items-center justify-between text-gray-400 mb-1">
             <span className="text-[11px] font-semibold uppercase tracking-wider">Students</span>
             <School className="w-4 h-4 text-purple-600" />
           </div>
-          <p className="text-xl sm:text-2xl font-bold text-gray-900">{metrics.totalStudents}</p>
-          <span className="text-[10px] text-gray-500">Registered across all campuses</span>
-        </div>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900">
+            {studentsLoaded ? allStudents.length : metrics.totalStudents}
+          </p>
+          <span className="text-[10px] text-purple-600 font-medium">View &amp; manage all &rarr;</span>
+        </button>
 
         <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-2xs">
           <div className="flex items-center justify-between text-gray-400 mb-1">
@@ -552,6 +669,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
         >
           <Users className="w-4 h-4" />
           <span>Campus Ambassadors Management</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('students')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center space-x-1.5 ${
+            activeTab === 'students'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          <School className="w-4 h-4" />
+          <span>All Students</span>
+          <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+            activeTab === 'students' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+          }`}>
+            {studentsLoaded ? allStudents.length : metrics.totalStudents}
+          </span>
         </button>
 
         <button
@@ -861,6 +995,218 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                         </td>
                       </tr>
                     ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: All Students Across All CAs */}
+      {activeTab === 'students' && (
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-2xl border border-gray-200/80 shadow-xs flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center flex-wrap gap-2.5 flex-1 min-w-[260px]">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                  placeholder="Search student name, email, college, event, cert ID..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                />
+              </div>
+
+              <select
+                value={studentCaFilter}
+                onChange={(e) => setStudentCaFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden max-w-[210px]"
+              >
+                <option value="all">All Campus Ambassadors</option>
+                {cas.map(ca => (
+                  <option key={ca.uid} value={ca.uid}>
+                    {ca.name} ({ca.caId})
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={studentCertFilter}
+                onChange={(e: any) => setStudentCertFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              >
+                <option value="all">All Cert Status</option>
+                <option value="issued">Issued Only</option>
+                <option value="not_issued">Not Issued</option>
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              {selectedStudentIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleOpenDeleteStudents(
+                      allStudents.filter(s => selectedStudentIds.has(s.id))
+                    )
+                  }
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center space-x-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Selected ({selectedStudentIds.size})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={loadData}
+                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition"
+                title="Refresh student records"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                    <th className="py-3 px-4 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFilteredStudents}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                        title="Select all visible students"
+                      />
+                    </th>
+                    <th className="py-3 px-4">Student</th>
+                    <th className="py-3 px-4">College &amp; Semester</th>
+                    <th className="py-3 px-4">Initiative / Event</th>
+                    <th className="py-3 px-4">Campus Ambassador</th>
+                    <th className="py-3 px-4">Certificate</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-xs">
+                  {filteredAllStudents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-gray-400">
+                        {allStudents.length === 0
+                          ? 'No students registered across the system yet.'
+                          : 'No students found matching your search or filters.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAllStudents.map((student) => {
+                      const ca = caByUid.get(student.caUid);
+                      const issuedCert = student.certificateId ? certById.get(student.certificateId) : undefined;
+                      const customEntries = Object.entries(student.customFields || {}).filter(([, val]) => String(val || '').trim() !== '');
+
+                      return (
+                        <tr
+                          key={student.id}
+                          className={`hover:bg-gray-50/60 transition ${
+                            selectedStudentIds.has(student.id) ? 'bg-blue-50/40' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-4">
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(student.id)}
+                              onChange={() => toggleStudentSelection(student.id)}
+                              className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                            />
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-gray-900">{student.fullName}</div>
+                            <div className="text-[11px] text-gray-500 font-mono">{student.email}</div>
+                            {customEntries.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {customEntries.slice(0, 3).map(([k, v]) => (
+                                  <span
+                                    key={k}
+                                    className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 text-slate-700 border border-slate-200"
+                                  >
+                                    {k}: {v}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-gray-700">
+                            <div className="font-medium">{student.college || '—'}</div>
+                            {student.semester && (
+                              <div className="text-[11px] text-gray-400">{student.semester}</div>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-gray-700">
+                            <div className="font-medium max-w-[220px] truncate" title={student.initiativeName}>
+                              {student.initiativeName || '—'}
+                            </div>
+                            {student.participationDate && (
+                              <div className="text-[11px] text-gray-400">{student.participationDate}</div>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-gray-800">{ca?.name || 'Assigned CA'}</div>
+                            <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                              {student.caId || ca?.caId || student.caUid}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4">
+                            {student.certificateStatus === 'issued' ? (
+                              <div className="space-y-0.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Issued
+                                </span>
+                                {student.certificateId && (
+                                  <div className="text-[10px] font-mono text-blue-600 font-semibold">
+                                    {student.certificateId}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                                {student.certificateStatus || 'not_issued'}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end space-x-1.5">
+                              {issuedCert && (
+                                <button
+                                  type="button"
+                                  onClick={() => setInspectingCert(issuedCert)}
+                                  className="px-2 py-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition"
+                                  title="Inspect Issued Certificate"
+                                >
+                                  Inspect
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDeleteStudents([student])}
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                title="Delete student permanently"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1235,17 +1581,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
                 </div>
               ) : (
                 inspectingCaStudents.students.map(s => (
-                  <div key={s.id} className="py-2.5 flex items-center justify-between">
+                  <div key={s.id} className="py-2.5 flex items-center justify-between gap-3">
                     <div>
                       <p className="font-bold text-gray-900">{s.fullName}</p>
                       <p className="text-[11px] text-gray-500">{s.email}</p>
                     </div>
-                    <div className="text-right">
+                    <div className="flex items-center space-x-2">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                         s.certificateStatus === 'issued' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
                       }`}>
                         {s.certificateStatus}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeleteStudents([s])}
+                        className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                        title="Delete student"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 ))
@@ -1371,6 +1725,128 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
           </div>
         </div>
       )}
+
+      {/* Delete Student(s) Confirmation Modal */}
+      {deletingStudentsState && (() => {
+        const count = deletingStudentsState.students.length;
+        const issuedCount = deletingStudentsState.students.filter(
+          s => s.certificateStatus === 'issued' && s.certificateId
+        ).length;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 bg-red-50 text-red-600 rounded-xl border border-red-100">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">
+                    {count === 1 ? 'Delete Student Record' : `Delete ${count} Student Records`}
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    {count === 1
+                      ? `${deletingStudentsState.students[0].fullName} • ${deletingStudentsState.students[0].email}`
+                      : 'Permanent removal from Campus Ambassador System'}
+                  </p>
+                </div>
+              </div>
+
+              {count > 1 && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-gray-700 space-y-1 max-h-36 overflow-y-auto">
+                  {deletingStudentsState.students.slice(0, 6).map(s => (
+                    <div key={s.id} className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-gray-900 truncate">{s.fullName}</span>
+                      <span className="font-mono text-[11px] text-gray-500 truncate">{s.email}</span>
+                    </div>
+                  ))}
+                  {count > 6 && (
+                    <p className="text-[11px] text-gray-500 pt-1">
+                      ...and {count - 6} more student(s)
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {issuedCount > 0 ? (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2.5">
+                  <p className="font-bold">Issued Certificate(s) Found</p>
+                  <p>
+                    <span className="font-bold">{issuedCount}</span> selected student(s) already have an issued
+                    certificate.
+                  </p>
+                  <label className="flex items-start space-x-2 pt-1 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={deletingStudentsState.deleteCertificate}
+                      onChange={(e) =>
+                        setDeletingStudentsState(prev =>
+                          prev ? { ...prev, deleteCertificate: e.target.checked } : null
+                        )
+                      }
+                      className="mt-0.5 rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                    />
+                    <span className="text-[11px] font-semibold text-amber-950">
+                      Also permanently delete {issuedCount} issued certificate(s) and email logs
+                      <span className="block font-normal text-amber-800">
+                        Leave unchecked to keep existing public certificate verification links working.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-gray-700">
+                  This permanently deletes the selected student record(s) from the system database.
+                </div>
+              )}
+
+              {!isCloudAuthenticated && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center justify-between gap-2">
+                  <span>
+                    Cloud Admin session is not active. Connect your Super Admin Google session so Firestore allows deleting student records.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => connectCloudAdminSession()}
+                    className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold shrink-0"
+                  >
+                    Connect
+                  </button>
+                </div>
+              )}
+
+              {deletingStudentsState.error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                  {deletingStudentsState.error}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingStudentsState(null)}
+                  disabled={deletingStudentsState.isDeleting}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteStudents}
+                  disabled={deletingStudentsState.isDeleting || !isCloudAuthenticated}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition disabled:opacity-50"
+                >
+                  {deletingStudentsState.isDeleting
+                    ? 'Deleting...'
+                    : count === 1
+                    ? 'Delete Student'
+                    : `Delete ${count} Students`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

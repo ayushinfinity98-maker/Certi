@@ -91,6 +91,22 @@ function saveCache<T>(key: string, data: T): void {
     console.warn(`Cache write error for ${key}:`, e);
   }
 }
+
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => stripUndefined(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    Object.entries(value as Record<string, any>).forEach(([k, v]) => {
+      if (v !== undefined) {
+        out[k] = stripUndefined(v);
+      }
+    });
+    return out as T;
+  }
+  return value;
+}
  
 // Default Seed Data for 100% Reliability
 const INITIAL_CAS: CampusAmbassador[] = [
@@ -288,7 +304,7 @@ export async function logAuditEvent(
   saveCache(KEY_AUDIT, [newLog, ...cached.slice(0, 500)]);
  
   try {
-    await setDoc(doc(db, 'auditLogs', logId), newLog);
+    await setDoc(doc(db, 'auditLogs', logId), stripUndefined(newLog));
   } catch (error) {
     console.warn('Could not record audit log to firestore:', error);
   }
@@ -297,14 +313,42 @@ export async function logAuditEvent(
 /**
  * Real-Time Subscriptions ("jo bhi ho vo real time data m chale")
  */
+export function subscribeToCampusAmbassadorProfile(
+  caUid: string,
+  onUpdate: (ca: CampusAmbassador) => void
+): Unsubscribe {
+  try {
+    return onSnapshot(
+      doc(db, 'campusAmbassadors', caUid),
+      (snap) => {
+        if (snap.exists()) {
+          const updatedCa = { ...snap.data(), uid: snap.id } as CampusAmbassador;
+          const cached = loadCache<CampusAmbassador[]>(KEY_CAS, []);
+          const nextCache = [updatedCa, ...cached.filter(c => c.uid !== updatedCa.uid)];
+          saveCache(KEY_CAS, nextCache);
+          onUpdate(updatedCa);
+        }
+      },
+      (error) => {
+        console.warn('Real-time CA profile listener warning:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not attach CA profile listener:', err);
+    return () => {};
+  }
+}
+
 export function subscribeToStudentsForCA(
   caUid: string,
   onUpdate: (students: Student[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  // Emit initial cached data immediately
-  const cached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
-  onUpdate(cached.filter(s => s.caUid === caUid));
+  // Emit cached data only if available while Firestore connects
+  const cached = loadCache<Student[]>(KEY_STUDENTS, []);
+  if (cached.length > 0) {
+    onUpdate(cached.filter(s => s.caUid === caUid));
+  }
 
   try {
     const q = query(collection(db, 'students'), where('caUid', '==', caUid));
@@ -312,13 +356,8 @@ export function subscribeToStudentsForCA(
       q,
       (snapshot) => {
         const fromDb = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Student));
-        // Merge into persistent cache
-        const allCached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
-        const map = new Map<string, Student>();
-        allCached.forEach(s => map.set(s.id, s));
-        fromDb.forEach(s => map.set(s.id, s));
-        const merged = Array.from(map.values());
-        saveCache(KEY_STUDENTS, merged);
+        const otherCached = loadCache<Student[]>(KEY_STUDENTS, []).filter(s => s.caUid !== caUid);
+        saveCache(KEY_STUDENTS, [...fromDb, ...otherCached]);
         onUpdate(fromDb);
       },
       (error) => {
@@ -337,9 +376,10 @@ export function subscribeToAllCampusAmbassadors(
   onError?: (err: Error) => void
 ): Unsubscribe {
   const deletedUids = getDeletedCaUidSet();
-  // Emit initial cache immediately
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
-  onUpdate(cached);
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, []).filter(c => !deletedUids.has(c.uid));
+  if (cached.length > 0) {
+    onUpdate(cached);
+  }
 
   try {
     const q = query(collection(db, 'campusAmbassadors'));
@@ -350,19 +390,12 @@ export function subscribeToAllCampusAmbassadors(
         const fromDb = snapshot.docs
           .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
           .filter(c => !currentDeleted.has(c.uid));
-        const rawCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(
-          c => !currentDeleted.has(c.uid)
-        );
-        const map = new Map<string, CampusAmbassador>();
-        rawCached.forEach(c => map.set(c.uid, c));
-        fromDb.forEach(c => map.set(c.uid, c));
-        const merged = Array.from(map.values());
-        saveCache(KEY_CAS, merged);
-        onUpdate(merged);
+        saveCache(KEY_CAS, fromDb);
+        onUpdate(fromDb);
 
-        // Whenever Super Admin is authenticated in Firebase Auth, keep all CAs & caDirectory synced to cloud
+        // Whenever Super Admin is authenticated in Firebase Auth, keep all Firestore CAs & caDirectory normalized
         if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
-          void syncCasToCloud(fromDb, rawCached).catch(() => {});
+          void syncCasToCloud(fromDb, []).catch(() => {});
         }
       },
       (error) => {
@@ -380,8 +413,10 @@ export function subscribeToCertificates(
   onUpdate: (certs: Certificate[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  const cached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
-  onUpdate(cached);
+  const cached = loadCache<Certificate[]>(KEY_CERTS, []);
+  if (cached.length > 0) {
+    onUpdate(cached);
+  }
 
   try {
     const q = query(collection(db, 'certificates'));
@@ -389,13 +424,8 @@ export function subscribeToCertificates(
       q,
       (snapshot) => {
         const fromDb = snapshot.docs.map(d => ({ ...d.data(), certificateId: d.id } as Certificate));
-        const allCached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
-        const map = new Map<string, Certificate>();
-        allCached.forEach(c => map.set(c.certificateId, c));
-        fromDb.forEach(c => map.set(c.certificateId, c));
-        const merged = Array.from(map.values());
-        saveCache(KEY_CERTS, merged);
-        onUpdate(merged);
+        saveCache(KEY_CERTS, fromDb);
+        onUpdate(fromDb);
       },
       (error) => {
         console.warn('Real-time certificates listener warning:', error);
@@ -412,27 +442,18 @@ export function subscribeToCertificates(
  * CA Student Management
  */
 export async function getStudentsForCA(caUid: string): Promise<Student[]> {
-  const cached = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
-  let caStudents = cached.filter(s => s.caUid === caUid);
- 
   try {
     const q = query(collection(db, 'students'), where('caUid', '==', caUid));
     const snap = await getDocs(q);
-    if (!snap.empty) {
-      const fromDb = snap.docs.map(d => ({ ...d.data(), id: d.id } as Student));
-      // Merge with cache
-      const map = new Map<string, Student>();
-      cached.forEach(s => map.set(s.id, s));
-      fromDb.forEach(s => map.set(s.id, s));
-      const mergedAll = Array.from(map.values());
-      saveCache(KEY_STUDENTS, mergedAll);
-      return mergedAll.filter(s => s.caUid === caUid);
-    }
+    const fromDb = snap.docs.map(d => ({ ...d.data(), id: d.id } as Student));
+    const otherCached = loadCache<Student[]>(KEY_STUDENTS, []).filter(s => s.caUid !== caUid);
+    saveCache(KEY_STUDENTS, [...fromDb, ...otherCached]);
+    return fromDb;
   } catch (error) {
     console.warn('Firestore getStudentsForCA fallback to cache:', error);
   }
- 
-  return caStudents;
+
+  return loadCache<Student[]>(KEY_STUDENTS, []).filter(s => s.caUid === caUid);
 }
  
 export async function addStudent(
@@ -464,42 +485,42 @@ export async function addStudent(
   };
  
   // Immediate save to cache
-  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, []);
   saveCache(KEY_STUDENTS, [newStudent, ...cachedAll]);
- 
+
   try {
-    await setDoc(doc(db, 'students', studentId), newStudent);
+    await setDoc(doc(db, 'students', studentId), stripUndefined(newStudent));
   } catch (error) {
     console.warn('Firestore addStudent offline fallback:', error);
   }
- 
+
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_ADDED', `Added student ${newStudent.fullName} (${newStudent.email})`, studentId);
   return newStudent;
 }
- 
+
 export async function updateStudent(studentId: string, updates: Partial<Student>, caUid: string, caEmail: string): Promise<void> {
   const now = new Date().toISOString();
-  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, []);
   const updatedAll = cachedAll.map(s => (s.id === studentId ? { ...s, ...updates, updatedAt: now } : s));
   saveCache(KEY_STUDENTS, updatedAll);
- 
+
   try {
     const ref = doc(db, 'students', studentId);
-    await updateDoc(ref, {
+    await updateDoc(ref, stripUndefined({
       ...updates,
       updatedAt: now
-    });
+    }));
   } catch (error) {
     console.warn('Firestore updateStudent offline fallback:', error);
   }
- 
+
   await logAuditEvent(caUid, caEmail, 'ca', 'STUDENT_UPDATED', `Updated student ${studentId}`, studentId);
 }
- 
+
 export async function deleteStudent(studentId: string, caUid: string, caEmail: string): Promise<void> {
-  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+  const cachedAll = loadCache<Student[]>(KEY_STUDENTS, []);
   saveCache(KEY_STUDENTS, cachedAll.filter(s => s.id !== studentId));
- 
+
   try {
     const ref = doc(db, 'students', studentId);
     await deleteDoc(ref);
@@ -552,24 +573,36 @@ export async function issueCertificateForStudent(
   ca: CampusAmbassador,
   actorEmail: string
 ): Promise<{ certificate: Certificate; emailResult: { success: boolean; error?: string } }> {
-  // If student already has a valid certificate, retrieve it
+  // If student already has a valid certificate, retrieve from Firestore first
   if (student.certificateId) {
-    const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
+    try {
+      const existingSnap = await getDoc(doc(db, 'certificates', student.certificateId));
+      if (existingSnap.exists()) {
+        const existingCert = existingSnap.data() as Certificate;
+        if (existingCert.status === 'valid') {
+          const emailResult = await dispatchCertificateEmail(existingCert, student);
+          return { certificate: existingCert, emailResult };
+        }
+      }
+    } catch {
+      // Fallback to cache check below
+    }
+    const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, []);
     const found = cachedCerts.find(c => c.certificateId === student.certificateId);
     if (found && found.status === 'valid') {
       const emailResult = await dispatchCertificateEmail(found, student);
       return { certificate: found, emailResult };
     }
   }
- 
+
   const cleanCaId = (ca.caId || 'CA001').replace(/[^A-Za-z0-9]/g, '');
   const certRandom = Math.random().toString(36).substring(2, 7).toUpperCase();
   const certificateId = `GSAP-2026-${cleanCaId}-${certRandom}`;
- 
+
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://google-student-ambassador-2026.web.app';
   const verificationUrl = `${origin}/verify/${certificateId}`;
   const now = new Date().toISOString();
- 
+
   const newCertificate: Certificate = {
     certificateId,
     studentId: student.id,
@@ -587,21 +620,21 @@ export async function issueCertificateForStudent(
     verificationUrl,
     issuedAt: now
   };
- 
+
   // 1. Immediately cache Certificate
-  const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
+  const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, []);
   saveCache(KEY_CERTS, [newCertificate, ...cachedCerts]);
- 
+
   // 2. Update Student status in cache
-  const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
+  const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, []);
   saveCache(
     KEY_STUDENTS,
     cachedStudents.map(s => s.id === student.id ? { ...s, certificateStatus: 'issued' as const, certificateId, updatedAt: now } : s)
   );
- 
+
   // 3. Update in Firestore
   try {
-    await setDoc(doc(db, 'certificates', certificateId), newCertificate);
+    await setDoc(doc(db, 'certificates', certificateId), stripUndefined(newCertificate));
     await updateDoc(doc(db, 'students', student.id), {
       certificateStatus: 'issued',
       certificateId,
@@ -631,24 +664,21 @@ export async function issueCertificateForStudent(
  * Public Certificate Verification
  */
 export async function getCertificateForVerification(certificateId: string): Promise<Certificate | null> {
-  const cached = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
+  const cached = loadCache<Certificate[]>(KEY_CERTS, []);
   const foundInCache = cached.find(c => c.certificateId.trim().toUpperCase() === certificateId.trim().toUpperCase());
- 
+
   try {
     const certRef = doc(db, 'certificates', certificateId);
     const snap = await getDoc(certRef);
     if (snap.exists()) {
       const fromDb = snap.data() as Certificate;
-      // Sync cache
-      if (!foundInCache) {
-        saveCache(KEY_CERTS, [fromDb, ...cached]);
-      }
+      saveCache(KEY_CERTS, [fromDb, ...cached.filter(c => c.certificateId !== fromDb.certificateId)]);
       return fromDb;
     }
   } catch (error) {
     console.warn('Error fetching verification cert from db, checking cache:', error);
   }
- 
+
   return foundInCache || null;
 }
  
@@ -838,33 +868,26 @@ export async function lookupCaDirectoryByCaId(
  */
 export async function getAllCampusAmbassadors(): Promise<CampusAmbassador[]> {
   const deletedUids = getDeletedCaUidSet();
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS).filter(c => !deletedUids.has(c.uid));
 
   try {
     const q = query(collection(db, 'campusAmbassadors'));
     const snap = await getDocs(q);
-    if (!snap.empty) {
-      const fromDb = snap.docs
-        .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
-        .filter(c => !deletedUids.has(c.uid));
-      const map = new Map<string, CampusAmbassador>();
-      cached.forEach(c => map.set(c.uid, c));
-      fromDb.forEach(c => map.set(c.uid, c));
-      const merged = Array.from(map.values());
-      saveCache(KEY_CAS, merged);
+    const fromDb = snap.docs
+      .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+      .filter(c => !deletedUids.has(c.uid));
+    saveCache(KEY_CAS, fromDb);
 
-      // If Super Admin is signed in, lazily keep caDirectory synced for existing CAs
-      if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
-        void Promise.all(fromDb.map(ca => writeCaDirectoryEntries(ca))).catch(() => {});
-      }
-
-      return merged;
+    // If Super Admin is signed in, lazily keep caDirectory synced for existing CAs
+    if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
+      void Promise.all(fromDb.map(ca => writeCaDirectoryEntries(ca))).catch(() => {});
     }
+
+    return fromDb;
   } catch (error) {
     console.warn('Firestore getAllCampusAmbassadors fallback to cache:', error);
   }
 
-  return cached;
+  return loadCache<CampusAmbassador[]>(KEY_CAS, []).filter(c => !deletedUids.has(c.uid));
 }
 
 export type CaLookupResult =
@@ -1072,7 +1095,7 @@ export async function createCampusAmbassadorAccount(
   saveCache(KEY_CAS, [newCA, ...cached.filter(c => c.uid !== uid)]);
 
   try {
-    await setDoc(doc(db, 'campusAmbassadors', uid), newCA);
+    await setDoc(doc(db, 'campusAmbassadors', uid), stripUndefined(newCA));
     await writeCaDirectoryEntries(newCA);
   } catch (error) {
     console.warn('Firestore createCampusAmbassadorAccount notice:', error);
@@ -1125,10 +1148,10 @@ export async function updateCampusAmbassador(
 
   try {
     const ref = doc(db, 'campusAmbassadors', caUid);
-    await updateDoc(ref, {
+    await updateDoc(ref, stripUndefined({
       ...normalizedUpdates,
       updatedAt: now
-    });
+    }));
 
     if (!mergedCA) {
       const snap = await getDoc(ref);
@@ -1164,12 +1187,12 @@ export async function updateCampusAmbassadorSignature(
   adminEmail: string
 ): Promise<void> {
   const now = new Date().toISOString();
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, []);
   saveCache(
     KEY_CAS,
     cached.map(c => c.uid === caUid ? { ...c, signatureUrl: signatureDataUrl, signatureUpdatedAt: now, updatedAt: now } : c)
   );
- 
+
   try {
     const ref = doc(db, 'campusAmbassadors', caUid);
     await updateDoc(ref, {
@@ -1180,7 +1203,7 @@ export async function updateCampusAmbassadorSignature(
   } catch (error) {
     console.warn('Firestore updateCampusAmbassadorSignature notice:', error);
   }
- 
+
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -1192,8 +1215,8 @@ export async function updateCampusAmbassadorSignature(
 }
 
 export async function checkCaUsageForDeletion(caUid: string): Promise<{ studentCount: number; certCount: number }> {
-  const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS).filter(s => s.caUid === caUid);
-  const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS).filter(c => c.caUid === caUid);
+  const cachedStudents = loadCache<Student[]>(KEY_STUDENTS, []).filter(s => s.caUid === caUid);
+  const cachedCerts = loadCache<Certificate[]>(KEY_CERTS, []).filter(c => c.caUid === caUid);
 
   let dbStudentCount = 0;
   let dbCertCount = 0;
@@ -1249,7 +1272,7 @@ export async function deleteCampusAmbassador(
   }
 
   markCaUidDeleted(ca.uid);
-  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, []);
   saveCache(KEY_CAS, cached.filter(c => c.uid !== ca.uid));
 
   await logAuditEvent(
@@ -1266,45 +1289,45 @@ export async function deleteCampusAmbassador(
  * Super Admin Metrics & Audit Logs
  */
 export async function getAdminSystemMetrics() {
-  const cas = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-  const students = loadCache<Student[]>(KEY_STUDENTS, INITIAL_STUDENTS);
-  const certs = loadCache<Certificate[]>(KEY_CERTS, INITIAL_CERTS);
-  const logs = loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []);
- 
   try {
+    const deletedUids = getDeletedCaUidSet();
     const [casSnap, studentsSnap, certsSnap, logsSnap] = await Promise.all([
       getDocs(collection(db, 'campusAmbassadors')),
       getDocs(collection(db, 'students')),
       getDocs(collection(db, 'certificates')),
       getDocs(collection(db, 'emailLogs'))
     ]);
- 
-    const finalCAs = Math.max(cas.length, casSnap.size);
-    const finalStudents = Math.max(students.length, studentsSnap.size);
-    const finalCerts = Math.max(certs.length, certsSnap.size);
-    const activeCAs = cas.filter(c => c.status === 'active').length;
- 
-    const emailLogs = logsSnap.empty ? logs : logsSnap.docs.map(d => d.data() as EmailLog);
+
+    const dbCAs = casSnap.docs
+      .map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador))
+      .filter(c => !deletedUids.has(c.uid));
+    const activeCAs = dbCAs.filter(c => c.status === 'active').length;
+
+    const emailLogs = logsSnap.docs.map(d => d.data() as EmailLog);
     const successfulEmails = emailLogs.filter(l => l.status === 'sent' || l.status === 'delivered').length;
     const failedEmails = emailLogs.filter(l => l.status === 'failed').length;
- 
+
     return {
-      totalCAs: finalCAs,
+      totalCAs: dbCAs.length,
       activeCAs,
-      totalStudents: finalStudents,
-      totalCertificates: finalCerts,
-      successfulEmails: Math.max(successfulEmails, certs.length),
+      totalStudents: studentsSnap.size,
+      totalCertificates: certsSnap.size,
+      successfulEmails,
       failedEmails
     };
   } catch (error) {
     console.warn('Using cache for metrics calculation:', error);
+    const cas = loadCache<CampusAmbassador[]>(KEY_CAS, []);
+    const students = loadCache<Student[]>(KEY_STUDENTS, []);
+    const certs = loadCache<Certificate[]>(KEY_CERTS, []);
+    const logs = loadCache<EmailLog[]>(KEY_EMAIL_LOGS, []);
     return {
       totalCAs: cas.length,
       activeCAs: cas.filter(c => c.status === 'active').length,
       totalStudents: students.length,
       totalCertificates: certs.length,
-      successfulEmails: certs.length,
-      failedEmails: 0
+      successfulEmails: logs.filter(l => l.status === 'sent' || l.status === 'delivered').length,
+      failedEmails: logs.filter(l => l.status === 'failed').length
     };
   }
 }

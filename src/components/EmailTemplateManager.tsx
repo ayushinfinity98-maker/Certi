@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { EmailTemplate } from '../types';
-import { getActiveEmailTemplate, updateEmailTemplate, sendTestEmailViaGmail } from '../services/emailService';
+import { getActiveEmailTemplate, subscribeToActiveEmailTemplate, updateEmailTemplate, sendTestEmailViaGmail } from '../services/emailService';
 import { logEmailTemplateChange } from '../services/dataService';
 import { Mail, Save, Eye, Send, CheckCircle2, AlertCircle, Sparkles, Chrome } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -26,18 +26,28 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
   const [confirmTestSend, setConfirmTestSend] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const isDirtyRef = useRef(false);
+
+  const applyTemplateToForm = (tpl: EmailTemplate) => {
+    setTemplate(tpl);
+    setSubject(tpl.subject);
+    setBody(tpl.body);
+    setFooter(tpl.footer);
+    setSenderName(tpl.senderName);
+    setSenderEmail(tpl.senderEmail);
+  };
 
   useEffect(() => {
-    getActiveEmailTemplate().then((tpl) => {
-      setTemplate(tpl);
-      setSubject(tpl.subject);
-      setBody(tpl.body);
-      setFooter(tpl.footer);
-      setSenderName(tpl.senderName);
-      setSenderEmail(tpl.senderEmail);
+    getActiveEmailTemplate().then(applyTemplateToForm);
+    const unsub = subscribeToActiveEmailTemplate((tpl) => {
+      if (!isDirtyRef.current) {
+        applyTemplateToForm(tpl);
+      }
     });
+    return () => unsub();
   }, []);
 
   const placeholders = [
@@ -53,6 +63,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
   ];
 
   const handleInsertTag = (tag: string) => {
+    isDirtyRef.current = true;
     setBody((prev) => prev + tag);
   };
 
@@ -60,6 +71,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
     if (!template) return;
     setIsSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
     try {
       const updated: EmailTemplate = {
         ...template,
@@ -73,11 +85,13 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
       };
       await updateEmailTemplate(updated, adminUid);
       await logEmailTemplateChange(subject, adminUid, adminEmail || 'admin@google.com');
+      isDirtyRef.current = false;
       setTemplate(updated);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save email template:', err);
+      setSaveError(err?.message || 'Failed saving email template to Firestore.');
     } finally {
       setIsSaving(false);
     }
@@ -194,7 +208,14 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
       {saveSuccess && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center space-x-2 text-xs text-emerald-800">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Official central email template updated and deployed across all Campus Ambassadors.</span>
+          <span>Official central email template updated and synced across all Campus Ambassadors.</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between text-xs text-red-800">
+          <span>{saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="font-bold text-red-700 ml-3">✕</button>
         </div>
       )}
 
@@ -214,7 +235,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
                   <input
                     type="text"
                     value={senderName}
-                    onChange={(e) => setSenderName(e.target.value)}
+                    onChange={(e) => { isDirtyRef.current = true; setSenderName(e.target.value); }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
                 </div>
@@ -225,7 +246,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
                   <input
                     type="email"
                     value={senderEmail}
-                    onChange={(e) => setSenderEmail(e.target.value)}
+                    onChange={(e) => { isDirtyRef.current = true; setSenderEmail(e.target.value); }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
                 </div>
@@ -238,7 +259,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
                 <input
                   type="text"
                   value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
+                  onChange={(e) => { isDirtyRef.current = true; setSubject(e.target.value); }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                 />
               </div>
@@ -255,7 +276,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
                 <textarea
                   rows={12}
                   value={body}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) => { isDirtyRef.current = true; setBody(e.target.value); }}
                   className="w-full p-3 border border-gray-300 rounded-xl text-xs sm:text-sm font-mono leading-relaxed focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                 />
               </div>
@@ -267,7 +288,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
                 <textarea
                   rows={2}
                   value={footer}
-                  onChange={(e) => setFooter(e.target.value)}
+                  onChange={(e) => { isDirtyRef.current = true; setFooter(e.target.value); }}
                   className="w-full p-2.5 border border-gray-300 rounded-xl text-xs text-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                 />
               </div>

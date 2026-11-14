@@ -4,6 +4,7 @@ import { generateVerificationQr, downloadCertificatePdf } from '../utils/certifi
 import { Download, Share2, CheckCircle2, ShieldCheck, ExternalLink, Printer } from 'lucide-react';
 import {
   getActiveCertificateTemplate,
+  subscribeToActiveCertificateTemplate,
   populateCertificatePlaceholders,
   resolvePlaceholderValue,
   isSignaturePlaceholderTag,
@@ -30,6 +31,10 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
   useEffect(() => {
     generateVerificationQr(certificate.certificateId).then(setQrCodeUrl);
     getActiveCertificateTemplate().then(setTemplate).catch(() => setTemplate(DEFAULT_TEMPLATES[0]));
+    const unsub = subscribeToActiveCertificateTemplate((latest) => {
+      setTemplate(latest);
+    });
+    return () => unsub();
   }, [certificate.certificateId]);
 
   const handleDownload = async () => {

@@ -1,5 +1,5 @@
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
 import { EmailTemplate, EmailLog, Certificate, Student } from '../types';
 import { generateCertificatePdfBlob } from '../utils/certificatePdf';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
@@ -39,6 +39,17 @@ Campus Ambassador, Google Student Ambassador Program 2026`,
   senderEmail: MAIN_ADMIN_EMAIL
 };
 
+function normalizeEmailTemplate(data: EmailTemplate): EmailTemplate {
+  const effectiveSenderEmail =
+    !data.senderEmail || data.senderEmail === 'ambassador-certificates@google-student-ambassador.org'
+      ? MAIN_ADMIN_EMAIL
+      : data.senderEmail;
+  return {
+    ...data,
+    senderEmail: effectiveSenderEmail
+  };
+}
+
 /**
  * Fetches the active email template from Firestore, or creates the initial template if not present
  */
@@ -47,22 +58,15 @@ export async function getActiveEmailTemplate(): Promise<EmailTemplate> {
     const templateRef = doc(db, 'emailTemplates', DEFAULT_TEMPLATE_ID);
     const snap = await getDoc(templateRef);
     if (snap.exists()) {
-      const data = snap.data() as EmailTemplate;
-      // Ensure legacy placeholder sender email migrates cleanly to the main admin Gmail ID
-      const effectiveSenderEmail =
-        !data.senderEmail || data.senderEmail === 'ambassador-certificates@google-student-ambassador.org'
-          ? MAIN_ADMIN_EMAIL
-          : data.senderEmail;
-      return {
-        ...data,
-        senderEmail: effectiveSenderEmail
-      };
+      return normalizeEmailTemplate(snap.data() as EmailTemplate);
     }
 
-    await setDoc(templateRef, {
-      ...INITIAL_EMAIL_TEMPLATE,
-      updatedAt: new Date().toISOString()
-    });
+    if (auth.currentUser?.email?.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase()) {
+      await setDoc(templateRef, {
+        ...INITIAL_EMAIL_TEMPLATE,
+        updatedAt: new Date().toISOString()
+      });
+    }
     return INITIAL_EMAIL_TEMPLATE;
   } catch (error) {
     console.warn('Could not read email template, using default fallback:', error);
@@ -71,22 +75,45 @@ export async function getActiveEmailTemplate(): Promise<EmailTemplate> {
 }
 
 /**
+ * Real-time subscription to the central email template so changes apply everywhere immediately.
+ */
+export function subscribeToActiveEmailTemplate(
+  onUpdate: (template: EmailTemplate) => void
+): Unsubscribe {
+  try {
+    return onSnapshot(
+      doc(db, 'emailTemplates', DEFAULT_TEMPLATE_ID),
+      (snap) => {
+        if (snap.exists()) {
+          onUpdate(normalizeEmailTemplate(snap.data() as EmailTemplate));
+        }
+      },
+      (err) => {
+        console.warn('Email template listener warning:', err);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not attach emailTemplates listener:', err);
+    return () => {};
+  }
+}
+
+/**
  * Saves/updates the email template in Firestore (Admin only)
  */
 export async function updateEmailTemplate(template: EmailTemplate, adminUid: string): Promise<void> {
   const templateRef = doc(db, 'emailTemplates', DEFAULT_TEMPLATE_ID);
+  const payload = Object.fromEntries(
+    Object.entries({
+      ...template,
+      id: DEFAULT_TEMPLATE_ID,
+      senderEmail: template.senderEmail || MAIN_ADMIN_EMAIL,
+      updatedBy: adminUid,
+      updatedAt: new Date().toISOString()
+    }).filter(([, v]) => v !== undefined)
+  );
   try {
-    await setDoc(
-      templateRef,
-      {
-        ...template,
-        id: DEFAULT_TEMPLATE_ID,
-        senderEmail: template.senderEmail || MAIN_ADMIN_EMAIL,
-        updatedBy: adminUid,
-        updatedAt: new Date().toISOString()
-      },
-      { merge: true }
-    );
+    await setDoc(templateRef, payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `emailTemplates/${DEFAULT_TEMPLATE_ID}`);
   }

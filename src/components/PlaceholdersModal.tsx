@@ -47,9 +47,11 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setSaveError(null);
       getActiveCertificateTemplate().then(tpl => {
         setTemplate(tpl);
         setElements(tpl.customElements || []);
@@ -144,6 +146,7 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
   const handleSave = async () => {
     setIsSaving(true);
     setSavedSuccess(false);
+    setSaveError(null);
     try {
       const updatedTemplate: CertificateTemplateConfig = {
         ...template,
@@ -151,13 +154,15 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
         customElements: elements
       };
       await saveCertificateTemplate(updatedTemplate, actorUid, actorEmail);
+      setTemplate(updatedTemplate);
+      if (onSaved) onSaved();
       setSavedSuccess(true);
       setTimeout(() => {
         setSavedSuccess(false);
-        if (onSaved) onSaved();
-      }, 1500);
-    } catch (err) {
+      }, 2500);
+    } catch (err: any) {
       console.error('Failed saving certificate placeholders:', err);
+      setSaveError(err?.message || 'Failed saving certificate placeholders to Firestore.');
     } finally {
       setIsSaving(false);
     }
@@ -206,7 +211,14 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
         {savedSuccess && (
           <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center space-x-2 text-xs text-emerald-800 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>Placeholders updated and saved permanently to the active certificate!</span>
+            <span>Placeholders updated and saved permanently in Firestore! All views synced immediately.</span>
+          </div>
+        )}
+
+        {saveError && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between text-xs text-red-800 animate-in fade-in">
+            <span>{saveError}</span>
+            <button type="button" onClick={() => setSaveError(null)} className="font-bold text-red-700 ml-3">✕</button>
           </div>
         )}
 

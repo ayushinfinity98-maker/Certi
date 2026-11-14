@@ -1,11 +1,31 @@
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { doc, getDocs, setDoc, deleteDoc, collection, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
 import { CertificateTemplateConfig } from '../types';
 import { logAuditEvent } from './dataService';
 
 export const DEFAULT_CERT_TEMPLATE_ID = 'tpl_gsap_participation_2026';
 const LOCAL_STORAGE_TEMPLATES_KEY = 'gsap_certificate_templates_persistent';
-const LOCAL_STORAGE_ACTIVE_TPL_KEY = 'gsap_active_cert_template_id';
+
+const SEEDED_TIMESTAMP = '2026-01-01T00:00:00.000Z';
+
+/**
+ * Recursively strips `undefined` properties so Firestore setDoc/updateDoc never rejects nested arrays/objects.
+ */
+export function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => stripUndefinedDeep(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    Object.entries(value as Record<string, any>).forEach(([k, v]) => {
+      if (v !== undefined) {
+        out[k] = stripUndefinedDeep(v);
+      }
+    });
+    return out as T;
+  }
+  return value;
+}
 
 export const DEFAULT_TEMPLATES: CertificateTemplateConfig[] = [
   {
@@ -26,7 +46,7 @@ export const DEFAULT_TEMPLATES: CertificateTemplateConfig[] = [
     primaryColor: '#1A73E8',
     fontFamily: 'serif',
     isActive: true,
-    updatedAt: new Date().toISOString()
+    updatedAt: SEEDED_TIMESTAMP
   },
   {
     id: 'tpl_gsap_appreciation_2026',
@@ -46,7 +66,7 @@ export const DEFAULT_TEMPLATES: CertificateTemplateConfig[] = [
     primaryColor: '#1E8E3E',
     fontFamily: 'serif',
     isActive: false,
-    updatedAt: new Date().toISOString()
+    updatedAt: SEEDED_TIMESTAMP
   },
   {
     id: 'tpl_gsap_excellence_2026',
@@ -66,14 +86,20 @@ export const DEFAULT_TEMPLATES: CertificateTemplateConfig[] = [
     primaryColor: '#D93025',
     fontFamily: 'serif',
     isActive: false,
-    updatedAt: new Date().toISOString()
+    updatedAt: SEEDED_TIMESTAMP
   }
 ];
 
-/**
- * Loads templates from localStorage cache to guarantee 0 data loss
- */
+function sortTemplates(list: CertificateTemplateConfig[]): CertificateTemplateConfig[] {
+  return [...list].sort((a, b) => {
+    if (a.isActive && !b.isActive) return -1;
+    if (!a.isActive && b.isActive) return 1;
+    return (a.title || a.id).localeCompare(b.title || b.id);
+  });
+}
+
 function getCachedTemplates(): CertificateTemplateConfig[] {
+  if (typeof window === 'undefined') return DEFAULT_TEMPLATES;
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_TEMPLATES_KEY);
     if (raw) {
@@ -86,10 +112,8 @@ function getCachedTemplates(): CertificateTemplateConfig[] {
   return DEFAULT_TEMPLATES;
 }
 
-/**
- * Saves templates into localStorage mirror so they never erase
- */
 function setCachedTemplates(templates: CertificateTemplateConfig[]) {
+  if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(LOCAL_STORAGE_TEMPLATES_KEY, JSON.stringify(templates));
   } catch (e) {
@@ -98,42 +122,82 @@ function setCachedTemplates(templates: CertificateTemplateConfig[]) {
 }
 
 /**
- * Fetches all certificate templates (Firestore + localStorage permanent fallback)
+ * Fetches all certificate templates directly from Firestore (single source of truth).
  */
 export async function getAllCertificateTemplates(): Promise<CertificateTemplateConfig[]> {
   try {
     const snap = await getDocs(collection(db, 'certificateTemplates'));
     if (!snap.empty) {
-      const fromDb = snap.docs.map(d => ({ ...d.data(), id: d.id } as CertificateTemplateConfig));
-      // Merge with cache preserving any newer local updates
-      const cached = getCachedTemplates();
-      const map = new Map<string, CertificateTemplateConfig>();
-      cached.forEach(t => map.set(t.id, t));
-      fromDb.forEach(t => map.set(t.id, t));
-      const merged = Array.from(map.values());
-      setCachedTemplates(merged);
-      return merged;
+      const fromDb = sortTemplates(
+        snap.docs.map(d => ({ ...d.data(), id: d.id } as CertificateTemplateConfig))
+      );
+      setCachedTemplates(fromDb);
+      return fromDb;
     }
 
-    // Seed initial templates if Firestore is empty
-    const initial = getCachedTemplates();
-    for (const tpl of initial) {
-      try {
-        await setDoc(doc(db, 'certificateTemplates', tpl.id), tpl);
-      } catch (e) {
-        // ignore write error if offline
+    // Seed initial templates ONLY when Firestore collection is completely empty and Super Admin is authenticated
+    const isAdminUser = auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com';
+    if (isAdminUser) {
+      for (const tpl of DEFAULT_TEMPLATES) {
+        await setDoc(doc(db, 'certificateTemplates', tpl.id), stripUndefinedDeep(tpl)).catch(() => {});
       }
+      setCachedTemplates(DEFAULT_TEMPLATES);
+      return DEFAULT_TEMPLATES;
     }
-    setCachedTemplates(initial);
-    return initial;
+
+    return getCachedTemplates();
   } catch (err) {
-    console.warn('Firestore templates offline, using permanent local storage:', err);
+    console.warn('Firestore templates fetch fallback to local cache:', err);
     return getCachedTemplates();
   }
 }
 
 /**
- * Super Admin explicit delete template function ("delete krne ka super admin ko option aye tb delete ho")
+ * Real-time subscription to all certificate templates so updates in 1 place appear everywhere immediately.
+ */
+export function subscribeToCertificateTemplates(
+  onUpdate: (templates: CertificateTemplateConfig[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  try {
+    return onSnapshot(
+      collection(db, 'certificateTemplates'),
+      (snap) => {
+        if (!snap.empty) {
+          const fromDb = sortTemplates(
+            snap.docs.map(d => ({ ...d.data(), id: d.id } as CertificateTemplateConfig))
+          );
+          setCachedTemplates(fromDb);
+          onUpdate(fromDb);
+        } else {
+          onUpdate(getCachedTemplates());
+        }
+      },
+      (err) => {
+        console.warn('Certificate templates listener warning:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not attach certificateTemplates listener:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Real-time subscription to the currently active certificate template.
+ */
+export function subscribeToActiveCertificateTemplate(
+  onUpdate: (template: CertificateTemplateConfig) => void
+): Unsubscribe {
+  return subscribeToCertificateTemplates((list) => {
+    const active = list.find(t => t.isActive) || list[0] || DEFAULT_TEMPLATES[0];
+    onUpdate(active);
+  });
+}
+
+/**
+ * Super Admin explicit delete template function
  */
 export async function deleteCertificateTemplate(
   templateId: string,
@@ -146,21 +210,25 @@ export async function deleteCertificateTemplate(
   }
 
   const remaining = all.filter(t => t.id !== templateId);
-  // If deleted template was active, activate the first remaining
   if (!remaining.some(t => t.isActive) && remaining.length > 0) {
     remaining[0].isActive = true;
   }
-
-  setCachedTemplates(remaining);
 
   try {
     await deleteDoc(doc(db, 'certificateTemplates', templateId));
     if (remaining.length > 0 && remaining[0].isActive) {
       await setDoc(doc(db, 'certificateTemplates', remaining[0].id), { isActive: true }, { merge: true });
     }
-  } catch (err) {
-    console.warn('Firestore delete template notice:', err);
+  } catch (err: any) {
+    console.error('Firestore delete template failed:', err);
+    throw new Error(
+      err?.code === 'permission-denied'
+        ? 'Permission denied: please sign in with your Super Admin Google account to delete templates in Cloud.'
+        : (err?.message || 'Failed to delete certificate template from Firestore.')
+    );
   }
+
+  setCachedTemplates(remaining);
 
   await logAuditEvent(
     adminUid,
@@ -173,7 +241,7 @@ export async function deleteCertificateTemplate(
 }
 
 /**
- * Returns the currently active template that CAs will automatically use
+ * Returns the currently active template that CAs and Verification portal use
  */
 export async function getActiveCertificateTemplate(): Promise<CertificateTemplateConfig> {
   const all = await getAllCertificateTemplates();
@@ -182,7 +250,7 @@ export async function getActiveCertificateTemplate(): Promise<CertificateTemplat
 }
 
 /**
- * Saves or updates a certificate template permanently
+ * Saves or updates a certificate template permanently in Firestore
  */
 export async function saveCertificateTemplate(
   template: CertificateTemplateConfig,
@@ -191,13 +259,12 @@ export async function saveCertificateTemplate(
 ): Promise<void> {
   const all = await getAllCertificateTemplates();
   const now = new Date().toISOString();
-  const updated: CertificateTemplateConfig = {
+  const updated: CertificateTemplateConfig = stripUndefinedDeep({
     ...template,
     updatedBy: adminUid,
     updatedAt: now
-  };
+  });
 
-  // If this template is set as active, deactivate others
   const nextList = all.map(t => {
     if (t.id === updated.id) return updated;
     if (updated.isActive) return { ...t, isActive: false };
@@ -208,23 +275,27 @@ export async function saveCertificateTemplate(
     nextList.push(updated);
   }
 
-  setCachedTemplates(nextList);
-
-  // Save to Firestore
+  // Save to Firestore first (overwrite doc cleanly so cleared/removed elements stay synced across all devices)
   try {
-    await setDoc(doc(db, 'certificateTemplates', updated.id), updated, { merge: true });
+    await setDoc(doc(db, 'certificateTemplates', updated.id), updated);
     if (updated.isActive) {
       for (const t of nextList) {
-        if (t.id !== updated.id) {
+        if (t.id !== updated.id && t.isActive === false) {
           await setDoc(doc(db, 'certificateTemplates', t.id), { isActive: false }, { merge: true });
         }
       }
     }
-  } catch (err) {
-    console.warn('Firestore write notice:', err);
+  } catch (err: any) {
+    console.error('Firestore saveCertificateTemplate failed:', err);
+    throw new Error(
+      err?.code === 'permission-denied'
+        ? 'Permission denied: please connect your Super Admin Google session first so changes save to Cloud for everyone.'
+        : (err?.message || 'Failed saving certificate template to Firestore.')
+    );
   }
 
-  // Audit log
+  setCachedTemplates(nextList);
+
   await logAuditEvent(
     adminUid,
     adminEmail,
@@ -236,7 +307,7 @@ export async function saveCertificateTemplate(
 }
 
 /**
- * Sets a specific template as the active certificate template
+ * Sets a specific template as the active certificate template in Firestore
  */
 export async function setActiveCertificateTemplate(
   templateId: string,
@@ -249,15 +320,20 @@ export async function setActiveCertificateTemplate(
     isActive: t.id === templateId
   }));
 
-  setCachedTemplates(nextList);
-
   try {
     for (const t of nextList) {
       await setDoc(doc(db, 'certificateTemplates', t.id), { isActive: t.isActive }, { merge: true });
     }
-  } catch (e) {
-    console.warn('Firestore active template notice:', e);
+  } catch (err: any) {
+    console.error('Firestore active template update failed:', err);
+    throw new Error(
+      err?.code === 'permission-denied'
+        ? 'Permission denied: please sign in with your Super Admin Google account to activate templates in Cloud.'
+        : (err?.message || 'Failed activating certificate template in Firestore.')
+    );
   }
+
+  setCachedTemplates(nextList);
 
   await logAuditEvent(
     adminUid,

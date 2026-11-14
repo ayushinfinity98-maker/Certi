@@ -32,7 +32,8 @@ import {
   importStudentsBatch, 
   issueCertificateForStudent,
   getEmailLogsForCA,
-  subscribeToStudentsForCA
+  subscribeToStudentsForCA,
+  subscribeToCampusAmbassadorProfile
 } from '../services/dataService';
 import { StudentModal } from './StudentModal';
 import { CsvImportModal } from './CsvImportModal';
@@ -48,11 +49,16 @@ interface CaDashboardProps {
   actorEmail: string;
 }
 
-export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
+export const CaDashboard: React.FC<CaDashboardProps> = ({ ca: initialCa, actorEmail }) => {
+  const [ca, setCa] = useState<CampusAmbassador>(initialCa);
   const [students, setStudents] = useState<Student[]>([]);
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    setCa(initialCa);
+  }, [initialCa]);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -81,16 +87,22 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
     setIsLoading(true);
     loadData();
 
+    // Real-time Firestore listener for CA profile (signature, permissions, name updates from Admin)
+    const unsubProfile = subscribeToCampusAmbassadorProfile(initialCa.uid, (updatedCa) => {
+      setCa(updatedCa);
+    });
+
     // Attach real-time Firestore listener for students
-    const unsubscribe = subscribeToStudentsForCA(ca.uid, (updatedStudents) => {
+    const unsubscribe = subscribeToStudentsForCA(initialCa.uid, (updatedStudents) => {
       setStudents(updatedStudents);
       setIsLoading(false);
     });
 
     return () => {
+      unsubProfile();
       unsubscribe();
     };
-  }, [ca.uid]);
+  }, [initialCa.uid]);
 
   const handleSaveStudent = async (data: any) => {
     if (editingStudent) {

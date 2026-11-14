@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CertificateTemplateConfig, Certificate, CertificateCustomElement } from '../types';
 import { 
   getAllCertificateTemplates, 
+  subscribeToCertificateTemplates,
   saveCertificateTemplate, 
   setActiveCertificateTemplate, 
   deleteCertificateTemplate,
@@ -54,27 +55,58 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   const [activeConfig, setActiveConfig] = useState<CertificateTemplateConfig>(DEFAULT_TEMPLATES[0]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [isSyncingSlide, setIsSyncingSlide] = useState(false);
   const [slideSyncStatus, setSlideSyncStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isPlaceholdersModalOpen, setIsPlaceholdersModalOpen] = useState(false);
+  const selectedIdRef = useRef<string>('');
+  const isDirtyRef = useRef<boolean>(false);
 
-  const loadTemplates = async () => {
+  const loadTemplates = async (forceRefreshActive = false) => {
     const list = await getAllCertificateTemplates();
     setTemplates(list);
-    const active = list.find(t => t.isActive) || list[0] || DEFAULT_TEMPLATES[0];
-    setSelectedTemplateId(active.id);
-    setActiveConfig(active);
+    const currentId = selectedIdRef.current;
+    const matched = (!forceRefreshActive && currentId ? list.find(t => t.id === currentId) : null)
+      || list.find(t => t.isActive)
+      || list[0]
+      || DEFAULT_TEMPLATES[0];
+    selectedIdRef.current = matched.id;
+    setSelectedTemplateId(matched.id);
+    if (!isDirtyRef.current || forceRefreshActive) {
+      setActiveConfig(matched);
+      isDirtyRef.current = false;
+    }
   };
 
   useEffect(() => {
     loadTemplates();
+    const unsub = subscribeToCertificateTemplates((list) => {
+      setTemplates(list);
+      const currentId = selectedIdRef.current;
+      const matched = (currentId ? list.find(t => t.id === currentId) : null)
+        || list.find(t => t.isActive)
+        || list[0];
+      if (matched) {
+        if (!selectedIdRef.current) {
+          selectedIdRef.current = matched.id;
+          setSelectedTemplateId(matched.id);
+        }
+        if (!isDirtyRef.current) {
+          setActiveConfig(matched);
+        }
+      }
+    });
+    return () => unsub();
   }, []);
 
   const handleSelectTemplate = (tpl: CertificateTemplateConfig) => {
+    selectedIdRef.current = tpl.id;
+    isDirtyRef.current = false;
     setSelectedTemplateId(tpl.id);
     setActiveConfig({ ...tpl });
     setSaveSuccess(false);
+    setSaveError(null);
     setSelectedElementId(null);
   };
 
@@ -179,6 +211,8 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       updatedAt: new Date().toISOString()
     };
 
+    selectedIdRef.current = newId;
+    isDirtyRef.current = true;
     setTemplates(prev => [...prev, newConfig]);
     setSelectedTemplateId(newId);
     setActiveConfig(newConfig);
@@ -189,6 +223,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     if (!file) return;
     try {
       const dataUrl = await processSignatureImageFile(file);
+      isDirtyRef.current = true;
       setActiveConfig(prev => ({
         ...prev,
         type: 'custom_uploaded',
@@ -227,6 +262,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       textAlign: 'center'
     };
 
+    isDirtyRef.current = true;
     setActiveConfig(prev => ({
       ...prev,
       elementsMode: 'manual_placed',
@@ -272,6 +308,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
 
     if (toAdd.length === 0) return;
 
+    isDirtyRef.current = true;
     setActiveConfig(prev => ({
       ...prev,
       elementsMode: 'manual_placed',
@@ -281,6 +318,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   };
 
   const handleUpdateElement = (id: string, updates: Partial<CertificateCustomElement>) => {
+    isDirtyRef.current = true;
     setActiveConfig(prev => ({
       ...prev,
       customElements: (prev.customElements || []).map(el => el.id === id ? { ...el, ...updates } : el)
@@ -288,6 +326,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   };
 
   const handleDeleteElement = (id: string) => {
+    isDirtyRef.current = true;
     setActiveConfig(prev => ({
       ...prev,
       customElements: (prev.customElements || []).filter(el => el.id !== id)
@@ -298,13 +337,16 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   const handleSave = async () => {
     setIsSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
     try {
       await saveCertificateTemplate(activeConfig, adminUid, adminEmail);
-      await loadTemplates();
+      isDirtyRef.current = false;
+      await loadTemplates(true);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed saving certificate template:', err);
+      setSaveError(err?.message || 'Failed saving certificate template to Firestore.');
     } finally {
       setIsSaving(false);
     }
@@ -342,6 +384,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
         }
       }
 
+      isDirtyRef.current = true;
       setActiveConfig(prev => ({
         ...prev,
         type: 'custom_uploaded',
@@ -448,7 +491,14 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
       {saveSuccess && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center space-x-2 text-xs text-emerald-800 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Certificate template saved permanently in Firestore! All Campus Ambassadors will instantly use this layout.</span>
+          <span>Certificate template saved permanently in Firestore! Every dashboard and verification page now shows this exact layout.</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between text-xs text-red-800 animate-in fade-in">
+          <span>{saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="font-bold text-red-700 ml-3">✕</button>
         </div>
       )}
 
@@ -512,7 +562,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 <input
                   type="checkbox"
                   checked={activeConfig.isActive}
-                  onChange={(e) => setActiveConfig(prev => ({ ...prev, isActive: e.target.checked }))}
+                  onChange={(e) => {
+                    isDirtyRef.current = true;
+                    setActiveConfig(prev => ({ ...prev, isActive: e.target.checked }));
+                  }}
                   className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
                 />
                 <span className="text-xs font-bold text-emerald-700">
@@ -528,7 +581,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               <input
                 type="text"
                 value={activeConfig.title}
-                onChange={(e) => setActiveConfig(prev => ({ ...prev, title: e.target.value }))}
+                onChange={(e) => {
+                  isDirtyRef.current = true;
+                  setActiveConfig(prev => ({ ...prev, title: e.target.value }));
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               />
             </div>
@@ -541,7 +597,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'blank_plain', elementsMode: 'manual_placed', showBorder: false, showLogo: false }))}
+                  onClick={() => {
+                    isDirtyRef.current = true;
+                    setActiveConfig(prev => ({ ...prev, type: 'blank_plain', elementsMode: 'manual_placed', showBorder: false, showLogo: false }));
+                  }}
                   className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
                     activeConfig.type === 'blank_plain'
                       ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
@@ -554,7 +613,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
 
                 <button
                   type="button"
-                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'custom_uploaded', elementsMode: 'manual_placed', showBorder: false }))}
+                  onClick={() => {
+                    isDirtyRef.current = true;
+                    setActiveConfig(prev => ({ ...prev, type: 'custom_uploaded', elementsMode: 'manual_placed', showBorder: false }));
+                  }}
                   className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
                     activeConfig.type === 'custom_uploaded'
                       ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
@@ -567,7 +629,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
 
                 <button
                   type="button"
-                  onClick={() => setActiveConfig(prev => ({ ...prev, type: 'standard_google', elementsMode: 'auto_layout', showBorder: true, showLogo: true }))}
+                  onClick={() => {
+                    isDirtyRef.current = true;
+                    setActiveConfig(prev => ({ ...prev, type: 'standard_google', elementsMode: 'auto_layout', showBorder: true, showLogo: true }));
+                  }}
                   className={`p-2 rounded-xl border text-[11px] font-semibold flex flex-col items-center justify-center space-y-1 transition ${
                     activeConfig.type === 'standard_google'
                       ? 'border-blue-600 bg-blue-50 text-blue-700 font-bold'
@@ -604,7 +669,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                     {activeConfig.backgroundUrl && (
                       <button
                         type="button"
-                        onClick={() => setActiveConfig(prev => ({ ...prev, backgroundUrl: '' }))}
+                        onClick={() => {
+                          isDirtyRef.current = true;
+                          setActiveConfig(prev => ({ ...prev, backgroundUrl: '' }));
+                        }}
                         className="text-xs text-red-600 hover:underline"
                       >
                         Remove Image
@@ -617,7 +685,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                     <input
                       type="color"
                       value={activeConfig.backgroundColor || '#FFFFFF'}
-                      onChange={(e) => setActiveConfig(prev => ({ ...prev, backgroundColor: e.target.value }))}
+                      onChange={(e) => {
+                        isDirtyRef.current = true;
+                        setActiveConfig(prev => ({ ...prev, backgroundColor: e.target.value }));
+                      }}
                       className="w-8 h-7 rounded border border-gray-300 bg-white cursor-pointer p-0.5"
                       title="Certificate Background Color"
                     />
@@ -650,7 +721,10 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   <input
                     type="url"
                     value={activeConfig.googleSlideUrl || ''}
-                    onChange={(e) => setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }))}
+                    onChange={(e) => {
+                      isDirtyRef.current = true;
+                      setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }));
+                    }}
                     placeholder="https://docs.google.com/presentation/d/..."
                     className="flex-1 px-3 py-1.5 bg-white border border-blue-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
                   />
@@ -1231,7 +1305,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
           onClose={() => setIsPlaceholdersModalOpen(false)}
           actorUid={adminUid}
           actorEmail={adminEmail}
-          onSaved={loadTemplates}
+          onSaved={() => loadTemplates(true)}
         />
       )}
 

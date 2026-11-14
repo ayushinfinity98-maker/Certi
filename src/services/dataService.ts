@@ -17,7 +17,7 @@ import {
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { auth, db, getSecondaryAuth } from '../firebase/config';
+import { ACTIVE_FIRESTORE_DB_ID, auth, db, getSecondaryAuth } from '../firebase/config';
 import { Student, Certificate, CampusAmbassador, EmailLog, AuditLog } from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { dispatchCertificateEmail } from './emailService';
@@ -807,7 +807,7 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
     const qGoogle = query(collection(db, 'campusAmbassadors'), where('googleEmail', '==', emailLower));
     snapGoogle = await getDocs(qGoogle);
   } catch (err: any) {
-    console.error('Firestore getCampusAmbassadorByGoogleEmail error:', err?.code, err?.message, err);
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (googleEmail) error:', err?.code, err?.message, err);
     throw err;
   }
 
@@ -815,6 +815,8 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
     const d = snapGoogle.docs[0];
     return { ...d.data(), uid: d.id } as CampusAmbassador;
   }
+
+  let fallbackErr: any = null;
 
   try {
     const qEmail = query(collection(db, 'campusAmbassadors'), where('email', '==', emailLower));
@@ -824,7 +826,8 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
       return { ...d.data(), uid: d.id } as CampusAmbassador;
     }
   } catch (err: any) {
-    console.error('Firestore email fallback query error:', err?.code, err?.message, err);
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (email) error:', err?.code, err?.message, err);
+    fallbackErr = err;
   }
 
   try {
@@ -837,18 +840,31 @@ export async function getCampusAmbassadorByGoogleEmail(email: string): Promise<C
       }
     }
   } catch (err: any) {
-    console.error('Firestore caDirectory lookup error:', err?.code, err?.message, err);
+    console.error('Firestore getCampusAmbassadorByGoogleEmail (caDirectory) error:', err?.code, err?.message, err);
+    fallbackErr = fallbackErr || err;
+  }
+
+  if (fallbackErr) {
+    throw fallbackErr;
   }
 
   // Fallback: local cache (only helps on the device where the CA was created)
   const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-  return (
+  const cachedMatch =
     cached.find(
       c =>
         c.email?.toLowerCase().trim() === emailLower ||
         (c.googleEmail && c.googleEmail.toLowerCase().trim() === emailLower)
-    ) || null
-  );
+    ) || null;
+
+  if (!cachedMatch) {
+    console.error('Firestore CA lookup returned 0 matching documents:', {
+      queriedEmail: emailLower,
+      databaseId: ACTIVE_FIRESTORE_DB_ID
+    });
+  }
+
+  return cachedMatch;
 }
 
 export async function createCampusAmbassadorAccount(

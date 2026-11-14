@@ -79,14 +79,14 @@ function AppContent() {
             <h2 className="text-lg font-bold text-gray-900">
               Access Restricted
             </h2>
-            {authError ? (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 leading-relaxed text-left">
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Your Google account <span className="font-semibold text-gray-900 font-mono">"{currentUser.email}"</span> could not be signed in as an authorized Campus Ambassador or Super Administrator for Campus Ambassador System.
+            </p>
+            {authError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 leading-relaxed text-left break-words">
+                <span className="font-bold block mb-0.5">Reason:</span>
                 {authError}
               </div>
-            ) : (
-              <p className="text-xs text-gray-600 leading-relaxed">
-                Your Google account <span className="font-semibold text-gray-900 font-mono">"{currentUser.email}"</span> is not registered as an authorized Campus Ambassador or Super Administrator for Campus Ambassador System.
-              </p>
             )}
             <p className="text-[11px] text-gray-400">
               Please contact the Super Admin at <span className="font-mono text-blue-600">ayushinfinity98@gmail.com</span> for access assistance.

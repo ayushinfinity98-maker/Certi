@@ -13,7 +13,13 @@ import {
   getDoc,
   setDoc
 } from 'firebase/firestore';
-import { auth, db, testFirestoreConnection } from '../firebase/config';
+import {
+  ACTIVE_FIREBASE_PROJECT_ID,
+  ACTIVE_FIRESTORE_DB_ID,
+  auth,
+  db,
+  testFirestoreConnection
+} from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
 import {
   getAllCampusAmbassadors,
@@ -59,9 +65,13 @@ function formatAuthLookupError(err: any): string {
   const code = err?.code || '';
   const msg = err?.message || 'Unable to verify your Campus Ambassador profile.';
   if (code === 'permission-denied' || msg.toLowerCase().includes('permission')) {
-    return `Permission denied: please contact admin (${code ? code + ': ' : ''}${msg})`;
+    return `Permission denied: please contact admin (${code ? code + ': ' : ''}${msg} | db: ${ACTIVE_FIRESTORE_DB_ID})`;
   }
-  return code ? `${code}: ${msg}` : msg;
+  return code ? `${code}: ${msg} (db: ${ACTIVE_FIRESTORE_DB_ID})` : `${msg} (db: ${ACTIVE_FIRESTORE_DB_ID})`;
+}
+
+function formatEmptyLookupReason(email: string): string {
+  return `No matching Campus Ambassador document found for "${email}" in Firestore project "${ACTIVE_FIREBASE_PROJECT_ID}", database "${ACTIVE_FIRESTORE_DB_ID}". Verify the record exists in this database with googleEmail="${email}".`;
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -174,6 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Default unassigned (query succeeded with no matching CA)
+      setAuthError(formatEmptyLookupReason(emailLower));
       setRole(null);
       setCaProfile(null);
       setAdminProfile(null);
@@ -345,8 +356,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Query succeeded with no matching CA: surface Access Restricted screen cleanly
-      setAuthError(null);
+      // Query succeeded with no matching CA: surface Access Restricted screen with exact reason
+      setAuthError(formatEmptyLookupReason(googleEmail));
       setCurrentUser(result.user);
       setRole(null);
       setCaProfile(null);

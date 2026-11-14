@@ -100,7 +100,7 @@ service cloud.firestore {
     // Certificate Templates collection (Admin controlled designs and placeholders)
     match /certificateTemplates/{templateId} {
       allow read: if true;
-      allow write: if isAdmin() || true;
+      allow write: if isAdmin();
     }
 
     // Email Templates collection

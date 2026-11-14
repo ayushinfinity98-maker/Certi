@@ -1,8 +1,15 @@
-import { doc, getDoc, setDoc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { EmailTemplate, EmailLog, Certificate, Student } from '../types';
 import { generateCertificatePdfBlob } from '../utils/certificatePdf';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
+import { sendEmailViaGmailApi } from './gmailService';
+import {
+  MAIN_ADMIN_EMAIL,
+  getWorkspaceAuthToken,
+  getWorkspaceAuthorizedEmail,
+  isAdminGmailAuthorized
+} from './googleWorkspaceAuth';
 
 export const DEFAULT_TEMPLATE_ID = 'default_certificate';
 
@@ -29,7 +36,7 @@ Warm regards,
 Campus Ambassador, Google Student Ambassador Program 2026`,
   footer: 'This is an official communication from the Google Student Ambassador Program 2026. Certificates are cryptographically stamped with unique QR validation identifiers.',
   senderName: 'Google Student Ambassador Program 2026',
-  senderEmail: 'ambassador-certificates@google-student-ambassador.org'
+  senderEmail: MAIN_ADMIN_EMAIL
 };
 
 /**
@@ -40,10 +47,18 @@ export async function getActiveEmailTemplate(): Promise<EmailTemplate> {
     const templateRef = doc(db, 'emailTemplates', DEFAULT_TEMPLATE_ID);
     const snap = await getDoc(templateRef);
     if (snap.exists()) {
-      return snap.data() as EmailTemplate;
+      const data = snap.data() as EmailTemplate;
+      // Ensure legacy placeholder sender email migrates cleanly to the main admin Gmail ID
+      const effectiveSenderEmail =
+        !data.senderEmail || data.senderEmail === 'ambassador-certificates@google-student-ambassador.org'
+          ? MAIN_ADMIN_EMAIL
+          : data.senderEmail;
+      return {
+        ...data,
+        senderEmail: effectiveSenderEmail
+      };
     }
 
-    // Seed default template
     await setDoc(templateRef, {
       ...INITIAL_EMAIL_TEMPLATE,
       updatedAt: new Date().toISOString()
@@ -61,12 +76,17 @@ export async function getActiveEmailTemplate(): Promise<EmailTemplate> {
 export async function updateEmailTemplate(template: EmailTemplate, adminUid: string): Promise<void> {
   const templateRef = doc(db, 'emailTemplates', DEFAULT_TEMPLATE_ID);
   try {
-    await setDoc(templateRef, {
-      ...template,
-      id: DEFAULT_TEMPLATE_ID,
-      updatedBy: adminUid,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
+    await setDoc(
+      templateRef,
+      {
+        ...template,
+        id: DEFAULT_TEMPLATE_ID,
+        senderEmail: template.senderEmail || MAIN_ADMIN_EMAIL,
+        updatedBy: adminUid,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `emailTemplates/${DEFAULT_TEMPLATE_ID}`);
   }
@@ -114,22 +134,22 @@ export function renderEmailContent(
 }
 
 /**
- * Dispatches an automated email to a student with the generated certificate PDF
+ * Dispatches an official email with PDF certificate attached strictly via the Main Admin's Gmail account.
+ * Never marks an email as delivered unless Gmail API actually accepted it.
  */
 export async function dispatchCertificateEmail(
   cert: Certificate,
   student: Student,
   template?: EmailTemplate
-): Promise<{ success: boolean; logId: string; error?: string }> {
-  const activeTemplate = template || await getActiveEmailTemplate();
+): Promise<{ success: boolean; queued?: boolean; logId: string; error?: string }> {
+  const activeTemplate = template || (await getActiveEmailTemplate());
   const rendered = renderEmailContent(activeTemplate, student, cert);
-  
-  // Create or identify email log
+
   const logId = `log_${cert.certificateId}`;
   const logRef = doc(db, 'emailLogs', logId);
+  const now = new Date().toISOString();
 
   try {
-    // 1. Set status to processing
     await setDoc(logRef, {
       id: logId,
       certificateId: cert.certificateId,
@@ -139,74 +159,98 @@ export async function dispatchCertificateEmail(
       caUid: cert.caUid,
       status: 'processing',
       retryCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     });
 
-    // 2. Generate PDF attachment in memory
-    const { base64, filename } = await generateCertificatePdfBlob(cert);
+    const token = getWorkspaceAuthToken();
+    const authorizedEmail = getWorkspaceAuthorizedEmail();
 
-    // 3. Dispatch to central backend API endpoint
-    try {
-      const response = await fetch('/api/send-certificate-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          to: student.email,
-          toName: student.fullName,
-          fromName: activeTemplate.senderName,
-          fromEmail: activeTemplate.senderEmail,
-          subject: rendered.subject,
-          text: `${rendered.body}\n\n---\n${rendered.footer}`,
-          certificateId: cert.certificateId,
-          attachmentFilename: filename,
-          attachmentBase64: base64
-        })
+    if (!token || !isAdminGmailAuthorized()) {
+      const reason = !token
+        ? `Pending Super Admin Gmail (${MAIN_ADMIN_EMAIL}) authorization. Sign in as ${MAIN_ADMIN_EMAIL} via Google and dispatch from the Admin Email Queue.`
+        : `Signed-in Google account (${authorizedEmail}) does not match main admin email (${MAIN_ADMIN_EMAIL}). Please authorize with ${MAIN_ADMIN_EMAIL}.`;
+
+      await updateDoc(logRef, {
+        status: 'pending',
+        errorMessage: reason,
+        updatedAt: new Date().toISOString()
       });
 
-      if (!response.ok) {
-        // If server returned non-200, still record detailed delivery status
-        const errorData = await response.json().catch(() => ({ message: 'Server delivery error' }));
-        console.warn('Central email server notification:', errorData);
-      }
-    } catch (apiErr) {
-      // If endpoint is running in client-mode or offline, log status cleanly
-      console.info('Backend email relay status processed:', apiErr);
+      return { success: false, queued: true, logId, error: reason };
     }
 
-    // 4. Mark status as delivered
+    // Generate verified PDF certificate attachment in memory
+    const { base64, filename } = await generateCertificatePdfBlob(cert);
+
+    // Send real email via Main Admin Gmail API
+    await sendEmailViaGmailApi({
+      to: student.email,
+      toName: student.fullName,
+      fromName: activeTemplate.senderName || 'Google Student Ambassador Program 2026',
+      fromEmail: MAIN_ADMIN_EMAIL,
+      subject: rendered.subject,
+      textBody: `${rendered.body}\n\n---\n${rendered.footer}`,
+      attachmentFilename: filename,
+      attachmentBase64DataUrl: base64
+    });
+
     await updateDoc(logRef, {
       status: 'delivered',
+      errorMessage: '',
       sentAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
 
     return { success: true, logId };
   } catch (err: any) {
-    console.error('Failed dispatching certificate email:', err);
+    console.error('Failed dispatching certificate email via Gmail:', err);
     try {
       await updateDoc(logRef, {
         status: 'failed',
-        errorMessage: err.message || 'Email delivery failed',
+        errorMessage: err.message || 'Gmail delivery failed',
         updatedAt: new Date().toISOString()
       });
-    } catch (e) {
-      // ignore secondary error
+    } catch {
+      // ignore secondary log update failure
     }
-    return { success: false, logId, error: err.message };
+    return { success: false, logId, error: err.message || 'Email delivery failed' };
   }
 }
 
 /**
- * Retries sending an email for a failed log
+ * Sends a live test email directly through the Main Admin Gmail account
+ */
+export async function sendTestEmailViaGmail(params: {
+  to: string;
+  subject: string;
+  body: string;
+  footer: string;
+  senderName: string;
+}): Promise<{ messageId: string }> {
+  if (!isAdminGmailAuthorized()) {
+    throw new Error(
+      `Please connect Main Admin Gmail (${MAIN_ADMIN_EMAIL}) with Google first before sending a test email.`
+    );
+  }
+
+  return await sendEmailViaGmailApi({
+    to: params.to,
+    fromName: params.senderName || 'Google Student Ambassador Program 2026',
+    fromEmail: MAIN_ADMIN_EMAIL,
+    subject: `[TEST] ${params.subject}`,
+    textBody: `${params.body}\n\n---\n${params.footer}`
+  });
+}
+
+/**
+ * Retries sending an email for a pending or failed log
  */
 export async function retryEmailDispatch(
   log: EmailLog,
   cert: Certificate,
   student: Student
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
   const logRef = doc(db, 'emailLogs', log.id);
   try {
     await updateDoc(logRef, {
@@ -217,9 +261,9 @@ export async function retryEmailDispatch(
 
     const template = await getActiveEmailTemplate();
     const result = await dispatchCertificateEmail(cert, student, template);
-    return result.success;
-  } catch (e) {
+    return { success: result.success, error: result.error };
+  } catch (e: any) {
     console.error('Retry failed:', e);
-    return false;
+    return { success: false, error: e.message || 'Retry failed' };
   }
 }

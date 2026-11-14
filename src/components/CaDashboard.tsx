@@ -21,8 +21,7 @@ import {
   ExternalLink,
   ShieldCheck,
   Shield,
-  School,
-  Type
+  School
 } from 'lucide-react';
 import { Student, CampusAmbassador, Certificate, EmailLog } from '../types';
 import { 
@@ -40,7 +39,6 @@ import { CsvImportModal } from './CsvImportModal';
 import { BulkIssuanceModal } from './BulkIssuanceModal';
 import { CertificateTemplate } from './CertificateTemplate';
 import { SendEmailModal } from './SendEmailModal';
-import { PlaceholdersModal } from './PlaceholdersModal';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { retryEmailDispatch } from '../services/emailService';
@@ -69,7 +67,6 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
   const [viewingCertificate, setViewingCertificate] = useState<Certificate | null>(null);
   const [issuingSingleStudent, setIssuingSingleStudent] = useState<Student | null>(null);
   const [emailingStudent, setEmailingStudent] = useState<Student | null>(null);
-  const [isPlaceholdersModalOpen, setIsPlaceholdersModalOpen] = useState(false);
 
   const loadData = async () => {
     try {
@@ -369,16 +366,6 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
 
             <button
               type="button"
-              onClick={() => setIsPlaceholdersModalOpen(true)}
-              className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold shadow-2xs transition flex items-center"
-              title="Add and Position Certificate Placeholders"
-            >
-              <Type className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
-              Add Placeholders
-            </button>
-
-            <button
-              type="button"
               onClick={() => setIsCsvModalOpen(true)}
               disabled={ca.permissions?.canImportCsv === false}
               className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-xl text-xs font-semibold shadow-2xs transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
@@ -580,17 +567,6 @@ export const CaDashboard: React.FC<CaDashboardProps> = ({ ca, actorEmail }) => {
           student={emailingStudent}
           ca={ca}
           onSent={loadData}
-        />
-      )}
-
-      {/* Placeholders Modal */}
-      {isPlaceholdersModalOpen && (
-        <PlaceholdersModal
-          isOpen={isPlaceholdersModalOpen}
-          onClose={() => setIsPlaceholdersModalOpen(false)}
-          actorUid={ca.uid}
-          actorEmail={actorEmail}
-          onSaved={loadData}
         />
       )}
 

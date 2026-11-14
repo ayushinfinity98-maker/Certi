@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { EmailTemplate } from '../types';
-import { getActiveEmailTemplate, updateEmailTemplate } from '../services/emailService';
+import { getActiveEmailTemplate, updateEmailTemplate, sendTestEmailViaGmail } from '../services/emailService';
 import { logEmailTemplateChange } from '../services/dataService';
-import { Mail, Save, Eye, Send, CheckCircle2, AlertCircle, Copy, Sparkles } from 'lucide-react';
+import { Mail, Save, Eye, Send, CheckCircle2, AlertCircle, Sparkles, Chrome } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
 
 interface EmailTemplateManagerProps {
   adminUid: string;
@@ -10,18 +12,21 @@ interface EmailTemplateManagerProps {
 }
 
 export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ adminUid, adminEmail }) => {
+  const { isAdminGmailConnected, connectAdminGmail } = useAuth();
   const [template, setTemplate] = useState<EmailTemplate | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [footer, setFooter] = useState('');
   const [senderName, setSenderName] = useState('');
-  const [senderEmail, setSenderEmail] = useState('');
-  const [testEmailAddress, setTestEmailAddress] = useState('ambassador-test@google.com');
+  const [senderEmail, setSenderEmail] = useState(MAIN_ADMIN_EMAIL);
+  const [testEmailAddress, setTestEmailAddress] = useState(MAIN_ADMIN_EMAIL);
 
   const [isSaving, setIsSaving] = useState(false);
   const [isSendingTest, setIsSendingTest] = useState(false);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const [confirmTestSend, setConfirmTestSend] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [testSuccessMessage, setTestSuccessMessage] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
@@ -78,28 +83,55 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
     }
   };
 
+  const handleConnectGmail = async () => {
+    setIsConnectingGmail(true);
+    setTestStatus(null);
+    try {
+      const res = await connectAdminGmail();
+      if (res.email !== MAIN_ADMIN_EMAIL.toLowerCase()) {
+        setTestStatus({
+          type: 'error',
+          message: `Connected ${res.email}, but emails should be authorized from ${MAIN_ADMIN_EMAIL}.`
+        });
+      }
+    } catch (err: any) {
+      setTestStatus({
+        type: 'error',
+        message: err.message || 'Could not authorize Google account.'
+      });
+    } finally {
+      setIsConnectingGmail(false);
+    }
+  };
+
   const handleSendTestEmail = async () => {
     if (!testEmailAddress) return;
+    if (!confirmTestSend) {
+      setConfirmTestSend(true);
+      return;
+    }
+
     setIsSendingTest(true);
-    setTestSuccessMessage(null);
+    setTestStatus(null);
     try {
-      const res = await fetch('/api/test-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: testEmailAddress,
-          subject,
-          body,
-          footer,
-          fromName: senderName,
-          fromEmail: senderEmail
-        })
+      await sendTestEmailViaGmail({
+        to: testEmailAddress,
+        subject,
+        body,
+        footer,
+        senderName
       });
-      const data = await res.json();
-      setTestSuccessMessage(`Test email successfully delivered to ${testEmailAddress}`);
-      setTimeout(() => setTestSuccessMessage(null), 4000);
+      setConfirmTestSend(false);
+      setTestStatus({
+        type: 'success',
+        message: `Test email genuinely sent from ${MAIN_ADMIN_EMAIL} to ${testEmailAddress}!`
+      });
+      setTimeout(() => setTestStatus(null), 5000);
     } catch (err: any) {
-      setTestSuccessMessage(`Test email dispatched via relay: ${err.message}`);
+      setTestStatus({
+        type: 'error',
+        message: err.message || 'Could not send test email.'
+      });
     } finally {
       setIsSendingTest(false);
     }
@@ -339,36 +371,72 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ admi
           <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center">
               <Send className="w-4 h-4 text-emerald-600 mr-1.5" />
-              Send Test Email
+              Send Live Test Email
             </h3>
             <p className="text-[11px] text-gray-500">
-              Deliver a live test message to verify formatting and mail server delivery:
+              Sends a real test message directly via <span className="font-mono font-semibold text-gray-700">{MAIN_ADMIN_EMAIL}</span> Gmail:
             </p>
+
+            {!isAdminGmailConnected ? (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl space-y-2 text-[11px] text-amber-900">
+                <p>Authorize {MAIN_ADMIN_EMAIL} with Google first to send live emails.</p>
+                <button
+                  type="button"
+                  onClick={handleConnectGmail}
+                  disabled={isConnectingGmail}
+                  className="w-full py-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 rounded-lg font-bold transition flex items-center justify-center space-x-1.5"
+                >
+                  <Chrome className="w-3.5 h-3.5 text-blue-600" />
+                  <span>{isConnectingGmail ? 'Connecting...' : `Connect ${MAIN_ADMIN_EMAIL}`}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800 flex items-center space-x-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Connected as {MAIN_ADMIN_EMAIL}</span>
+              </div>
+            )}
 
             <div>
               <input
                 type="email"
                 value={testEmailAddress}
-                onChange={(e) => setTestEmailAddress(e.target.value)}
+                onChange={(e) => {
+                  setTestEmailAddress(e.target.value);
+                  setConfirmTestSend(false);
+                }}
                 placeholder="Enter recipient email"
                 className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               />
             </div>
 
+            {confirmTestSend && (
+              <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-blue-900">
+                Send real test email to <span className="font-mono font-bold">{testEmailAddress}</span> from <span className="font-mono font-bold">{MAIN_ADMIN_EMAIL}</span>? Click again to confirm.
+              </div>
+            )}
+
             <button
               type="button"
               onClick={handleSendTestEmail}
-              disabled={isSendingTest || !testEmailAddress}
+              disabled={isSendingTest || !testEmailAddress || !isAdminGmailConnected}
               className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center justify-center disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5 mr-1.5" />
-              {isSendingTest ? 'Sending...' : 'Send Live Test Email'}
+              {isSendingTest ? 'Sending via Gmail...' : confirmTestSend ? 'Confirm & Send Test Email' : 'Send Live Test Email'}
             </button>
 
-            {testSuccessMessage && (
-              <p className="text-[11px] text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200">
-                {testSuccessMessage}
-              </p>
+            {testStatus && (
+              <div
+                className={`text-[11px] p-2.5 rounded-lg border flex items-start space-x-1.5 ${
+                  testStatus.type === 'success'
+                    ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                    : 'text-red-800 bg-red-50 border-red-200'
+                }`}
+              >
+                {testStatus.type === 'error' && <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-600" />}
+                <span>{testStatus.message}</span>
+              </div>
             )}
           </div>
 

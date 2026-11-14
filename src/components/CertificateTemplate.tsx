@@ -119,7 +119,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
           backgroundImage: template.backgroundUrl ? `url(${template.backgroundUrl})` : undefined,
           backgroundSize: '100% 100%',
           backgroundPosition: 'center',
-          backgroundColor: '#FFFFFF',
+          backgroundColor: template.backgroundColor || '#FFFFFF',
           boxShadow: '0 10px 40px -10px rgba(0,0,0,0.08), 0 0 1px 1px rgba(0,0,0,0.04)'
         }}
       >
@@ -263,6 +263,14 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
             {(template.customElements || []).map(el => {
               let content: React.ReactNode = null;
 
+              const resolvedFont = el.customFontName
+                ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
+                : el.fontFamily === 'serif'
+                ? 'Playfair Display, Georgia, serif'
+                : el.fontFamily === 'mono'
+                ? 'monospace'
+                : 'sans-serif';
+
               if (el.type === 'placeholder') {
                 const val = (sampleValues as any)[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`;
                 content = (
@@ -271,7 +279,7 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                       fontSize: `${el.fontSize || 16}px`,
                       fontWeight: el.fontWeight || 'normal',
                       color: el.color || '#202124',
-                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                      fontFamily: resolvedFont
                     }}
                   >
                     {val}
@@ -284,11 +292,23 @@ export const CertificateTemplate: React.FC<CertificateTemplateProps> = ({
                       fontSize: `${el.fontSize || 16}px`,
                       fontWeight: el.fontWeight || 'normal',
                       color: el.color || '#202124',
-                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                      fontFamily: resolvedFont
                     }}
                   >
-                    {el.customText || ''}
+                    {populateCertificatePlaceholders(el.customText || '', sampleValues)}
                   </span>
+                );
+              } else if (el.type === 'image' && el.customText) {
+                content = (
+                  <img
+                    src={el.customText}
+                    alt={el.label || 'Certificate graphic'}
+                    style={{
+                      width: el.width ? `${el.width * 6}px` : '80px',
+                      height: el.height ? `${el.height * 4}px` : 'auto',
+                      objectFit: 'contain'
+                    }}
+                  />
                 );
               } else if (el.type === 'qr') {
                 content = (

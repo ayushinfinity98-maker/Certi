@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import { Award, Mail, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck } from 'lucide-react';
-import { Student, CampusAmbassador, Certificate } from '../types';
+import { Student, CampusAmbassador } from '../types';
 import { issueCertificateForStudent } from '../services/dataService';
+import { useAuth } from '../context/AuthContext';
+import { MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
 
 interface BulkIssuanceModalProps {
   students: Student[];
@@ -21,6 +23,7 @@ export const BulkIssuanceModal: React.FC<BulkIssuanceModalProps> = ({
   onClose,
   onCompleted
 }) => {
+  const { isAdminGmailConnected } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [results, setResults] = useState<Array<{
@@ -147,7 +150,11 @@ export const BulkIssuanceModal: React.FC<BulkIssuanceModalProps> = ({
             <ul className="text-xs text-gray-600 space-y-2 list-disc list-inside">
               <li>Receive a uniquely generated certificate ID & QR verification code</li>
               <li>Have their certificate stamped with your authorized signature</li>
-              <li>Receive an automated official email with the verified PDF certificate attached</li>
+              <li>
+                {isAdminGmailConnected
+                  ? `Receive an official email sent directly from ${MAIN_ADMIN_EMAIL} with PDF attached`
+                  : `Be queued for official PDF email dispatch from ${MAIN_ADMIN_EMAIL} (Admin Gmail authorization needed to send immediately)`}
+              </li>
             </ul>
           </div>
         )}
@@ -190,10 +197,15 @@ export const BulkIssuanceModal: React.FC<BulkIssuanceModalProps> = ({
                   </div>
                   <div className="text-right">
                     {r.success ? (
-                      <span className="inline-flex items-center text-emerald-600 font-semibold text-[11px]">
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                        {r.certId}
-                      </span>
+                      <div className="flex flex-col items-end">
+                        <span className="inline-flex items-center text-emerald-600 font-semibold text-[11px]">
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                          {r.certId}
+                        </span>
+                        <span className={`text-[10px] ${r.emailSuccess ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          {r.emailSuccess ? 'Email sent via Gmail' : 'Email queued for Admin Gmail'}
+                        </span>
+                      </div>
                     ) : (
                       <span className="inline-flex items-center text-red-600 font-semibold text-[11px]">
                         <AlertCircle className="w-3.5 h-3.5 mr-1" />

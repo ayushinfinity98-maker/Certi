@@ -143,7 +143,7 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "Timestamp of action" }
       },
       "required": ["actorUid", "action", "timestamp"]
-    }
+    },
     "CertificateTemplate": {
       "title": "CertificateTemplate",
       "description": "Customizable certificate template with background, typography, and dynamic placeholders",
@@ -151,18 +151,21 @@
       "properties": {
         "id": { "type": "string", "description": "Unique template identifier" },
         "title": { "type": "string", "maxLength": 150, "description": "Template title (e.g. Participation, Appreciation)" },
-        "type": { "type": "string", "enum": ["standard_google", "custom_uploaded"], "description": "Design layout type" },
-        "backgroundUrl": { "type": "string", "description": "Uploaded certificate background image or pattern" },
+        "type": { "type": "string", "enum": ["standard_google", "custom_uploaded", "blank_plain"], "description": "Design layout type" },
+        "backgroundUrl": { "type": "string", "description": "Uploaded or imported certificate background image" },
+        "backgroundColor": { "type": "string", "description": "Solid hex background color" },
+        "googleSlideUrl": { "type": "string", "description": "Connected Google Slides URL" },
+        "elementsMode": { "type": "string", "enum": ["auto_layout", "manual_placed"], "description": "Layout mode" },
         "heading": { "type": "string", "maxLength": 100, "description": "Main certificate heading" },
         "subheading": { "type": "string", "maxLength": 150, "description": "Subheading or program subtitle" },
         "presentationText": { "type": "string", "maxLength": 150, "description": "Lead-in presentation text" },
         "bodyText": { "type": "string", "maxLength": 2000, "description": "Template description body with placeholders" },
-        "isActive": { "type": "string", "enum": ["true", "false"], "description": "Whether this template is currently active for issuance" },
+        "isActive": { "type": "boolean", "description": "Whether this template is currently active for issuance" },
         "primaryColor": { "type": "string", "description": "Accent branding color" },
         "updatedBy": { "type": "string", "description": "Admin UID who last updated" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
       },
-      "required": ["id", "title", "heading"]
+      "required": ["id", "title"]
     }
   },
   "firestore": {

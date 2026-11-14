@@ -22,7 +22,8 @@ import {
   Palette,
   Copy,
   Check,
-  Chrome
+  Chrome,
+  Send
 } from 'lucide-react';
 import { CampusAmbassador, Certificate, EmailLog, AuditLog, Student } from '../types';
 import { 
@@ -44,8 +45,11 @@ import { CertificateTemplate } from './CertificateTemplate';
 import { CertificateDesigner } from './CertificateDesigner';
 import { AuditLogsView } from './AuditLogsView';
 import { checkAndSeedDemoDataIfEmpty } from '../services/seedData';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
+import { retryEmailDispatch } from '../services/emailService';
+import { MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
 
 interface AdminDashboardProps {
   adminUid: string;
@@ -53,6 +57,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminEmail }) => {
+  const { isAdminGmailConnected, connectAdminGmail } = useAuth();
   const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'templates' | 'certificates' | 'audit'>('cas');
   const [cas, setCas] = useState<CampusAmbassador[]>([]);
   const [metrics, setMetrics] = useState({
@@ -80,6 +85,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
   const [copiedCredentials, setCopiedCredentials] = useState(false);
   const [inspectingCert, setInspectingCert] = useState<Certificate | null>(null);
   const [inspectingCaStudents, setInspectingCaStudents] = useState<{ ca: CampusAmbassador; students: Student[] } | null>(null);
+  const [dispatchingLogId, setDispatchingLogId] = useState<string | null>(null);
+  const [isDispatchingAll, setIsDispatchingAll] = useState(false);
+  const [dispatchNotice, setDispatchNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
 
   const loadData = async () => {
     try {
@@ -148,6 +157,135 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     setInspectingCaStudents({ ca, students });
   };
 
+  const handleConnectAdminGmail = async () => {
+    setIsConnectingGmail(true);
+    setDispatchNotice(null);
+    try {
+      const res = await connectAdminGmail();
+      if (res.email === MAIN_ADMIN_EMAIL.toLowerCase()) {
+        setDispatchNotice({
+          type: 'success',
+          message: `Gmail (${MAIN_ADMIN_EMAIL}) connected! You can now send or retry certificate emails.`
+        });
+      } else {
+        setDispatchNotice({
+          type: 'error',
+          message: `Signed in as ${res.email}. Please connect with ${MAIN_ADMIN_EMAIL} to send official emails.`
+        });
+      }
+    } catch (err: any) {
+      setDispatchNotice({
+        type: 'error',
+        message: err.message || 'Could not authorize Google account.'
+      });
+    } finally {
+      setIsConnectingGmail(false);
+    }
+  };
+
+  const handleDispatchLog = async (log: EmailLog) => {
+    setDispatchingLogId(log.id);
+    setDispatchNotice(null);
+    try {
+      const certSnap = await getDoc(doc(db, 'certificates', log.certificateId));
+      const studentSnap = await getDoc(doc(db, 'students', log.studentId));
+      if (!certSnap.exists()) throw new Error(`Certificate ${log.certificateId} not found.`);
+      const cert = certSnap.data() as Certificate;
+      const student: Student = studentSnap.exists()
+        ? (studentSnap.data() as Student)
+        : {
+            id: log.studentId,
+            caUid: cert.caUid,
+            caId: cert.caId,
+            fullName: log.studentName || cert.studentName,
+            email: log.studentEmail,
+            college: cert.college,
+            semester: cert.semester,
+            initiativeName: cert.initiativeName,
+            participationDate: cert.participationDate,
+            certificateStatus: 'issued',
+            certificateId: cert.certificateId,
+            createdAt: cert.issuedAt,
+            updatedAt: cert.issuedAt
+          };
+
+      const res = await retryEmailDispatch(log, cert, student);
+      if (res.success) {
+        setDispatchNotice({
+          type: 'success',
+          message: `Sent PDF certificate email to ${log.studentEmail} via ${MAIN_ADMIN_EMAIL}!`
+        });
+      } else {
+        setDispatchNotice({
+          type: 'error',
+          message: res.error || `Failed sending email to ${log.studentEmail}.`
+        });
+      }
+      await loadData();
+    } catch (err: any) {
+      setDispatchNotice({
+        type: 'error',
+        message: err.message || 'Email dispatch failed.'
+      });
+    } finally {
+      setDispatchingLogId(null);
+    }
+  };
+
+  const handleDispatchAllPending = async () => {
+    const queue = allEmailLogs.filter(l => l.status === 'pending' || l.status === 'failed');
+    if (queue.length === 0) return;
+    if (!window.confirm(`Send ${queue.length} queued/failed certificate email(s) right now from ${MAIN_ADMIN_EMAIL}?`)) {
+      return;
+    }
+
+    setIsDispatchingAll(true);
+    setDispatchNotice(null);
+    let sent = 0;
+    let failed = 0;
+    for (const log of queue) {
+      try {
+        const certSnap = await getDoc(doc(db, 'certificates', log.certificateId));
+        if (!certSnap.exists()) {
+          failed++;
+          continue;
+        }
+        const cert = certSnap.data() as Certificate;
+        const studentSnap = await getDoc(doc(db, 'students', log.studentId));
+        const student: Student = studentSnap.exists()
+          ? (studentSnap.data() as Student)
+          : {
+              id: log.studentId,
+              caUid: cert.caUid,
+              caId: cert.caId,
+              fullName: log.studentName || cert.studentName,
+              email: log.studentEmail,
+              college: cert.college,
+              semester: cert.semester,
+              initiativeName: cert.initiativeName,
+              participationDate: cert.participationDate,
+              certificateStatus: 'issued',
+              certificateId: cert.certificateId,
+              createdAt: cert.issuedAt,
+              updatedAt: cert.issuedAt
+            };
+        const res = await retryEmailDispatch(log, cert, student);
+        if (res.success) sent++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    await loadData();
+    setIsDispatchingAll(false);
+    setDispatchNotice({
+      type: sent > 0 && failed === 0 ? 'success' : 'error',
+      message: `Batch dispatch complete: ${sent} sent via ${MAIN_ADMIN_EMAIL}, ${failed} failed.`
+    });
+  };
+
+  const pendingOrFailedLogs = allEmailLogs.filter(l => l.status === 'pending' || l.status === 'failed');
+
   const filteredCas = cas.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.college.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -159,6 +297,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
 
   return (
     <div className="space-y-6">
+      {/* Main Admin Gmail Connection Bar */}
+      <div className={`p-3.5 rounded-2xl border flex items-center justify-between flex-wrap gap-3 ${
+        isAdminGmailConnected
+          ? 'bg-emerald-50/70 border-emerald-200'
+          : 'bg-amber-50/80 border-amber-200'
+      }`}>
+        <div className="flex items-center space-x-2.5 text-xs">
+          <Mail className={`w-4 h-4 shrink-0 ${isAdminGmailConnected ? 'text-emerald-600' : 'text-amber-600'}`} />
+          <div>
+            <span className="font-bold text-gray-900">
+              Official Gmail Dispatch ({MAIN_ADMIN_EMAIL}):
+            </span>{' '}
+            <span className={isAdminGmailConnected ? 'text-emerald-800 font-medium' : 'text-amber-900 font-medium'}>
+              {isAdminGmailConnected
+                ? 'Authorized & ready to send certificates and copy Google Slides'
+                : 'Not yet authorized in this browser session'}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          {pendingOrFailedLogs.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('certificates')}
+              className="px-3 py-1.5 bg-white border border-amber-300 text-amber-900 rounded-xl text-[11px] font-bold hover:bg-amber-100 transition"
+            >
+              {pendingOrFailedLogs.length} Queued / Failed Email(s)
+            </button>
+          )}
+          {!isAdminGmailConnected && (
+            <button
+              type="button"
+              onClick={handleConnectAdminGmail}
+              disabled={isConnectingGmail}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+            >
+              <Chrome className="w-3.5 h-3.5" />
+              <span>{isConnectingGmail ? 'Connecting...' : 'Authorize Admin Gmail & Slides'}</span>
+            </button>
+          )}
+        </div>
+      </div>
       
       {/* Metrics Banner */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
@@ -514,6 +694,105 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       {/* TAB 3: Global Certificates & Delivery Logs */}
       {activeTab === 'certificates' && (
         <div className="space-y-4">
+          {/* Email Dispatch Queue Card */}
+          <div className="bg-white p-6 rounded-2xl border border-gray-200/80 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h3 className="text-base font-bold text-gray-900 flex items-center">
+                  <Send className="w-4 h-4 text-blue-600 mr-2" />
+                  Official Email Dispatch Logs ({allEmailLogs.length})
+                </h3>
+                <p className="text-xs text-gray-500">
+                  All emails are sent with PDF attachment strictly from <span className="font-mono font-semibold text-gray-700">{MAIN_ADMIN_EMAIL}</span>.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2">
+                {pendingOrFailedLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDispatchAllPending}
+                    disabled={isDispatchingAll || !isAdminGmailConnected}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{isDispatchingAll ? 'Sending Queue...' : `Send All Queued/Failed (${pendingOrFailedLogs.length})`}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {dispatchNotice && (
+              <div
+                className={`p-3 rounded-xl text-xs border ${
+                  dispatchNotice.type === 'success'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-red-50 border-red-200 text-red-800'
+                }`}
+              >
+                {dispatchNotice.message}
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                    <th className="py-2.5 px-3">Student</th>
+                    <th className="py-2.5 px-3">Certificate ID</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Details</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {allEmailLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-5 text-center text-gray-400">
+                        No email dispatch logs recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    allEmailLogs.map(log => (
+                      <tr key={log.id} className="hover:bg-gray-50">
+                        <td className="py-2.5 px-3">
+                          <span className="font-semibold text-gray-900 block">{log.studentName}</span>
+                          <span className="font-mono text-[11px] text-gray-500">{log.studentEmail}</span>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{log.certificateId}</td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              log.status === 'delivered' || log.status === 'sent'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : log.status === 'pending' || log.status === 'processing'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}
+                          >
+                            {log.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-[11px] text-gray-500 max-w-xs truncate">
+                          {log.errorMessage || (log.sentAt ? `Sent at ${new Date(log.sentAt).toLocaleString()}` : 'Ready')}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDispatchLog(log)}
+                            disabled={dispatchingLogId === log.id || !isAdminGmailConnected}
+                            className="px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-bold transition disabled:opacity-40"
+                          >
+                            {dispatchingLogId === log.id ? 'Sending...' : log.status === 'delivered' ? 'Resend' : 'Send Now'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div className="bg-white p-6 rounded-2xl border border-gray-200/80 shadow-xs">
             <h3 className="text-base font-bold text-gray-900 mb-2">
               System-Wide Issued Certificates ({allCertificates.length})

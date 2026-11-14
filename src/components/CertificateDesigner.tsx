@@ -34,6 +34,9 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { processSignatureImageFile } from '../utils/signatureUtils';
+import { importFromGoogleSlide, SlideAuthError } from '../services/googleSlidesService';
+import { authorizeGoogleWorkspacePopup, getWorkspaceAuthToken, MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
+import { PlaceholdersModal } from './PlaceholdersModal';
 
 interface CertificateDesignerProps {
   adminUid: string;
@@ -47,6 +50,9 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [isSyncingSlide, setIsSyncingSlide] = useState(false);
+  const [slideSyncStatus, setSlideSyncStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isPlaceholdersModalOpen, setIsPlaceholdersModalOpen] = useState(false);
 
   const loadTemplates = async () => {
     const list = await getAllCertificateTemplates();
@@ -243,6 +249,64 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
     }
   };
 
+  const handleSyncFromGoogleSlide = async () => {
+    const url = (activeConfig.googleSlideUrl || '').trim();
+    if (!url) {
+      setSlideSyncStatus({
+        type: 'error',
+        message: 'Please paste a Google Slides presentation URL first.'
+      });
+      return;
+    }
+
+    setIsSyncingSlide(true);
+    setSlideSyncStatus(null);
+
+    try {
+      let token = getWorkspaceAuthToken();
+      if (!token) {
+        const authRes = await authorizeGoogleWorkspacePopup(adminEmail || MAIN_ADMIN_EMAIL);
+        token = authRes.accessToken;
+      }
+
+      let imported;
+      try {
+        imported = await importFromGoogleSlide(url, token);
+      } catch (err) {
+        if (err instanceof SlideAuthError) {
+          const authRes = await authorizeGoogleWorkspacePopup(adminEmail || MAIN_ADMIN_EMAIL);
+          imported = await importFromGoogleSlide(url, authRes.accessToken);
+        } else {
+          throw err;
+        }
+      }
+
+      setActiveConfig(prev => ({
+        ...prev,
+        type: 'custom_uploaded',
+        elementsMode: 'manual_placed',
+        showBorder: false,
+        showLogo: false,
+        backgroundUrl: imported.backgroundUrl || '',
+        backgroundColor: imported.backgroundColor || '#FFFFFF',
+        customElements: imported.customElements
+      }));
+
+      setSelectedElementId(imported.customElements[0]?.id || null);
+      setSlideSyncStatus({
+        type: 'success',
+        message: `Synced from "${imported.presentationTitle || 'Google Slide'}": copied ${imported.elementCount} element(s), font styles, colors${imported.hasBackground ? ', and slide background' : ''}. Click "Save Template" to apply!`
+      });
+    } catch (err: any) {
+      setSlideSyncStatus({
+        type: 'error',
+        message: err.message || 'Could not import from Google Slide.'
+      });
+    } finally {
+      setIsSyncingSlide(false);
+    }
+  };
+
   const handleDeleteTemplate = async (templateId: string, templateTitle: string) => {
     if (!window.confirm(`Are you sure you want to permanently delete template "${templateTitle}"? Only Super Admin can perform this action.`)) {
       return;
@@ -289,7 +353,16 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
           </div>
         </div>
 
-        <div className="flex items-center space-x-2.5">
+        <div className="flex items-center space-x-2.5 flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setIsPlaceholdersModalOpen(true)}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-semibold rounded-xl transition flex items-center shadow-2xs"
+          >
+            <Type className="w-4 h-4 mr-1.5 text-indigo-600" />
+            Add Placeholders
+          </button>
+
           <button
             type="button"
             onClick={handleCreatePlainBlankTemplate}
@@ -446,65 +519,78 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               </div>
             </div>
 
-            {/* Background Upload Field */}
+            {/* Background Upload & Solid Color Field */}
             {(activeConfig.type === 'custom_uploaded' || activeConfig.type === 'blank_plain') && (
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
                 <span className="text-xs font-bold text-gray-800 block">
-                  Custom Certificate Background Image (PNG/JPG)
+                  Certificate Background Image & Color
                 </span>
                 <p className="text-[11px] text-gray-500">
-                  Select your own clean, pre-designed or blank certificate image to place placeholders on top.
+                  Upload a certificate background image or pick/copy a background color from Google Slides.
                 </p>
-                <div className="flex items-center space-x-2">
-                  <label className="cursor-pointer px-3 py-1.5 bg-white text-blue-700 border border-blue-300 rounded-lg text-xs font-bold hover:bg-blue-50 transition shadow-2xs flex items-center space-x-1.5">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Upload Background</span>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center space-x-2">
+                    <label className="cursor-pointer px-3 py-1.5 bg-white text-blue-700 border border-blue-300 rounded-lg text-xs font-bold hover:bg-blue-50 transition shadow-2xs flex items-center space-x-1.5">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload Background</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        className="hidden"
+                        onChange={handleBackgroundUpload}
+                      />
+                    </label>
+                    {activeConfig.backgroundUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveConfig(prev => ({ ...prev, backgroundUrl: '' }))}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Remove Image
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[11px] font-semibold text-gray-600">Bg Color:</span>
                     <input
-                      type="file"
-                      accept="image/png,image/jpeg"
-                      className="hidden"
-                      onChange={handleBackgroundUpload}
+                      type="color"
+                      value={activeConfig.backgroundColor || '#FFFFFF'}
+                      onChange={(e) => setActiveConfig(prev => ({ ...prev, backgroundColor: e.target.value }))}
+                      className="w-8 h-7 rounded border border-gray-300 bg-white cursor-pointer p-0.5"
+                      title="Certificate Background Color"
                     />
-                  </label>
-                  {activeConfig.backgroundUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveConfig(prev => ({ ...prev, backgroundUrl: '' }))}
-                      className="text-xs text-red-600 hover:underline"
-                    >
-                      Remove Background
-                    </button>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Google Slides & Marked Placeholders Connect & Sync */}
+            {/* Google Slides Full Sync (Background, Font, Color & Placeholders) */}
             <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-blue-900 flex items-center">
                   <FileSpreadsheet className="w-4 h-4 mr-1.5 text-blue-600" />
-                  Google Slides / Sheets Certificate Sync
+                  Google Slides Full Certificate Sync
                 </span>
                 <span className="text-[10px] bg-blue-200/80 text-blue-900 font-bold px-2 py-0.5 rounded-full">
-                  Slides & Sheets Integration
+                  Live Slides API
                 </span>
               </div>
 
               <p className="text-[11px] text-gray-600 leading-relaxed">
-                Connect your Google Slide presentation or Google Sheet containing marked placeholders (e.g. <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{student_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{initiative_name}}'}</code>).
+                Paste your Google Slides URL containing <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{student_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{initiative_name}}'}</code>, <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{qr_code}}'}</code>, or <code className="bg-white px-1 py-0.5 rounded border border-blue-200 text-blue-700">{'{{ca_signature}}'}</code>. Copies placeholders, font family, font colors, and slide background.
               </p>
 
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                  Google Slides / Sheets Public Share URL:
+                  Google Slides Presentation URL:
                 </label>
                 <div className="flex items-center space-x-2">
                   <input
                     type="url"
                     value={activeConfig.googleSlideUrl || ''}
                     onChange={(e) => setActiveConfig(prev => ({ ...prev, googleSlideUrl: e.target.value }))}
-                    placeholder="https://docs.google.com/presentation/d/... or /spreadsheets/d/..."
+                    placeholder="https://docs.google.com/presentation/d/..."
                     className="flex-1 px-3 py-1.5 bg-white border border-blue-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
                   />
                   {activeConfig.googleSlideUrl && (
@@ -521,104 +607,30 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                 </div>
               </div>
 
-              {/* Sync Slide Marked Placeholders Button */}
+              {/* Sync Slide Button */}
               <div className="pt-1 flex items-center justify-between flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    // Extract or auto-configure marked placeholders for Google Slide
-                    const slideMarkedElements: CertificateCustomElement[] = [
-                      {
-                        id: 'el_slide_student_name',
-                        type: 'placeholder',
-                        placeholderTag: 'student_name',
-                        label: '{{student_name}} (Google Slide)',
-                        x: 50,
-                        y: 44,
-                        fontSize: 28,
-                        fontWeight: 'bold',
-                        fontFamily: 'serif',
-                        color: '#1A73E8',
-                        textAlign: 'center'
-                      },
-                      {
-                        id: 'el_slide_initiative_name',
-                        type: 'placeholder',
-                        placeholderTag: 'initiative_name',
-                        label: '{{initiative_name}} (Google Slide)',
-                        x: 50,
-                        y: 53,
-                        fontSize: 16,
-                        fontWeight: '600',
-                        fontFamily: 'sans',
-                        color: '#202124',
-                        textAlign: 'center'
-                      },
-                      {
-                        id: 'el_slide_college_name',
-                        type: 'placeholder',
-                        placeholderTag: 'college_name',
-                        label: '{{college_name}} (Google Slide)',
-                        x: 50,
-                        y: 59,
-                        fontSize: 14,
-                        fontWeight: 'normal',
-                        fontFamily: 'sans',
-                        color: '#5F6368',
-                        textAlign: 'center'
-                      },
-                      {
-                        id: 'el_slide_date',
-                        type: 'placeholder',
-                        placeholderTag: 'participation_date',
-                        label: '{{participation_date}} (Google Slide)',
-                        x: 20,
-                        y: 84,
-                        fontSize: 13,
-                        fontWeight: '600',
-                        fontFamily: 'sans',
-                        color: '#202124',
-                        textAlign: 'left'
-                      },
-                      {
-                        id: 'el_slide_qr',
-                        type: 'qr',
-                        label: '{{qr_code}} (Google Slide)',
-                        x: 50,
-                        y: 82,
-                        fontSize: 12,
-                        color: '#1A73E8',
-                        textAlign: 'center'
-                      },
-                      {
-                        id: 'el_slide_sig',
-                        type: 'signature',
-                        label: '{{ca_signature}} (Google Slide)',
-                        x: 80,
-                        y: 84,
-                        fontSize: 13,
-                        color: '#202124',
-                        textAlign: 'right'
-                      }
-                    ];
-
-                    setActiveConfig(prev => ({
-                      ...prev,
-                      elementsMode: 'manual_placed',
-                      customElements: slideMarkedElements
-                    }));
-                  }}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition flex items-center space-x-1.5"
+                  onClick={handleSyncFromGoogleSlide}
+                  disabled={isSyncingSlide}
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition flex items-center space-x-1.5 disabled:opacity-50"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Sync Marked Placeholders from Google Slide</span>
+                  <RotateCcw className={`w-3.5 h-3.5 ${isSyncingSlide ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingSlide ? 'Copying from Google Slide...' : 'Copy Slide (Placeholders, Font, Color & Background)'}</span>
                 </button>
-
-                <span className="text-[10px] text-emerald-700 font-semibold flex items-center">
-                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                  Auto-Detects {'{{tags}}'}
-                </span>
               </div>
+
+              {slideSyncStatus && (
+                <div
+                  className={`p-2.5 rounded-xl text-[11px] border ${
+                    slideSyncStatus.type === 'success'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-red-50 border-red-200 text-red-800'
+                  }`}
+                >
+                  {slideSyncStatus.message}
+                </div>
+              )}
             </div>
           </div>
 
@@ -864,6 +876,39 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                   </div>
                 </div>
 
+                {/* Font Family & Weight */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 mb-1">
+                      Font Family {selectedElement.customFontName ? `(${selectedElement.customFontName})` : ''}
+                    </label>
+                    <select
+                      value={selectedElement.fontFamily || 'sans'}
+                      onChange={(e: any) => handleUpdateElement(selectedElement.id, { fontFamily: e.target.value, customFontName: undefined })}
+                      className="w-full px-2 py-1 bg-white border border-gray-300 rounded-lg text-xs"
+                    >
+                      <option value="sans">Sans-Serif</option>
+                      <option value="serif">Serif (Classic)</option>
+                      <option value="mono">Monospace</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 mb-1">
+                      Font Weight
+                    </label>
+                    <select
+                      value={selectedElement.fontWeight || 'normal'}
+                      onChange={(e: any) => handleUpdateElement(selectedElement.id, { fontWeight: e.target.value })}
+                      className="w-full px-2 py-1 bg-white border border-gray-300 rounded-lg text-xs"
+                    >
+                      <option value="normal">Regular</option>
+                      <option value="600">Semi-Bold</option>
+                      <option value="bold">Bold</option>
+                    </select>
+                  </div>
+                </div>
+
               </div>
             ) : (
               <p className="text-xs text-center text-gray-400 py-3 bg-gray-50 rounded-xl border border-dashed border-gray-200">
@@ -917,7 +962,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               backgroundImage: activeConfig.backgroundUrl ? `url(${activeConfig.backgroundUrl})` : undefined,
               backgroundSize: '100% 100%',
               backgroundPosition: 'center',
-              backgroundColor: '#FFFFFF',
+              backgroundColor: activeConfig.backgroundColor || '#FFFFFF',
               boxShadow: '0 10px 40px -10px rgba(0,0,0,0.08), 0 0 1px 1px rgba(0,0,0,0.04)'
             }}
           >
@@ -971,9 +1016,16 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
               </div>
             ) : null}
 
-            {/* Manually Placed Custom Elements */}
+            {/* Manually Placed / Google Slide Imported Elements */}
             {(activeConfig.customElements || []).map(el => {
               const isSelected = el.id === selectedElementId;
+              const resolvedFont = el.customFontName
+                ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
+                : el.fontFamily === 'serif'
+                ? 'Playfair Display, Georgia, serif'
+                : el.fontFamily === 'mono'
+                ? 'monospace'
+                : 'sans-serif';
               let content: React.ReactNode = null;
 
               if (el.type === 'placeholder') {
@@ -984,7 +1036,7 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                       fontSize: `${el.fontSize || 16}px`,
                       fontWeight: el.fontWeight || 'normal',
                       color: el.color || '#202124',
-                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                      fontFamily: resolvedFont
                     }}
                   >
                     {val}
@@ -997,11 +1049,23 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
                       fontSize: `${el.fontSize || 16}px`,
                       fontWeight: el.fontWeight || 'normal',
                       color: el.color || '#202124',
-                      fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                      fontFamily: resolvedFont
                     }}
                   >
-                    {el.customText || 'Text Box'}
+                    {populateCertificatePlaceholders(el.customText || 'Text Box', sampleValues)}
                   </span>
+                );
+              } else if (el.type === 'image' && el.customText) {
+                content = (
+                  <img
+                    src={el.customText}
+                    alt={el.label || 'Slide Graphic'}
+                    style={{
+                      width: el.width ? `${el.width * 5}px` : '64px',
+                      height: el.height ? `${el.height * 3.5}px` : 'auto',
+                      objectFit: 'contain'
+                    }}
+                  />
                 );
               } else if (el.type === 'qr') {
                 content = (
@@ -1054,6 +1118,17 @@ export const CertificateDesigner: React.FC<CertificateDesignerProps> = ({ adminU
         </div>
 
       </div>
+
+      {/* Admin-only Quick Placeholders Modal */}
+      {isPlaceholdersModalOpen && (
+        <PlaceholdersModal
+          isOpen={isPlaceholdersModalOpen}
+          onClose={() => setIsPlaceholdersModalOpen(false)}
+          actorUid={adminUid}
+          actorEmail={adminEmail}
+          onSaved={loadTemplates}
+        />
+      )}
 
     </div>
   );

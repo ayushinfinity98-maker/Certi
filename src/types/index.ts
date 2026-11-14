@@ -133,6 +133,7 @@ export interface CertificateCustomElement {
   fontSize?: number; // in pixels (base 14-36)
   fontWeight?: 'normal' | 'bold' | '600';
   fontFamily?: 'serif' | 'sans' | 'mono';
+  customFontName?: string;
   color?: string;
   textAlign?: 'left' | 'center' | 'right';
   width?: number; // percentage or px
@@ -144,6 +145,7 @@ export interface CertificateTemplateConfig {
   title: string; // e.g. "Official GSAP 2026 Participation Certificate"
   type: 'standard_google' | 'custom_uploaded' | 'blank_plain';
   backgroundUrl?: string; // Optional custom certificate background image data URL or empty for plain white
+  backgroundColor?: string; // Optional solid hex background color (e.g. from Google Slides)
   googleSlideUrl?: string; // Optional Google Slides template link or Google Sheet source
   elementsMode?: 'auto_layout' | 'manual_placed'; // When manual_placed, strictly renders manual custom elements
   customElements?: CertificateCustomElement[]; // Manually positioned text boxes & placeholders

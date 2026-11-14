@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Mail, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck, FileText, Send, User } from 'lucide-react';
+import { Mail, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck, Send, Chrome } from 'lucide-react';
 import { Student, CampusAmbassador, Certificate } from '../types';
 import { dispatchCertificateEmail } from '../services/emailService';
 import { getDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
+import { MAIN_ADMIN_EMAIL } from '../services/googleWorkspaceAuth';
 
 interface SendEmailModalProps {
   isOpen: boolean;
@@ -20,13 +22,43 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   ca,
   onSent
 }) => {
+  const { role, isAdminGmailConnected, connectAdminGmail } = useAuth();
   const [isSending, setIsSending] = useState(false);
-  const [sendResult, setSendResult] = useState<{ success: boolean; message?: string } | null>(null);
-  const [customNote, setCustomNote] = useState('');
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(false);
+  const [sendResult, setSendResult] = useState<{ success: boolean; queued?: boolean; message?: string } | null>(null);
 
   if (!isOpen) return null;
 
+  const isAdminUser = role === 'superadmin' || role === 'admin';
+
+  const handleConnectAdminGmail = async () => {
+    setIsConnectingGmail(true);
+    setSendResult(null);
+    try {
+      const res = await connectAdminGmail();
+      if (res.email !== MAIN_ADMIN_EMAIL.toLowerCase()) {
+        setSendResult({
+          success: false,
+          message: `Signed in as ${res.email}, but emails must be sent from the main admin email (${MAIN_ADMIN_EMAIL}). Please select ${MAIN_ADMIN_EMAIL}.`
+        });
+      }
+    } catch (err: any) {
+      setSendResult({
+        success: false,
+        message: err.message || 'Could not authorize Google account.'
+      });
+    } finally {
+      setIsConnectingGmail(false);
+    }
+  };
+
   const handleSendEmail = async () => {
+    if (!confirmSend) {
+      setConfirmSend(true);
+      return;
+    }
+
     setIsSending(true);
     setSendResult(null);
 
@@ -35,7 +67,6 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
         throw new Error('This student does not have an issued certificate yet. Please click "Issue" first or use Bulk Issuance.');
       }
 
-      // Fetch certificate document
       const certRef = doc(db, 'certificates', student.certificateId);
       const snap = await getDoc(certRef);
 
@@ -43,7 +74,6 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
       if (snap.exists()) {
         cert = snap.data() as Certificate;
       } else {
-        // Construct fallback certificate
         const origin = typeof window !== 'undefined' ? window.location.origin : 'https://google-student-ambassador-2026.web.app';
         cert = {
           certificateId: student.certificateId,
@@ -68,8 +98,17 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
       if (res.success) {
         setSendResult({
           success: true,
-          message: `Official certificate email successfully delivered to ${student.email} with verified PDF certificate attachment.`
+          message: `Official certificate email sent from ${MAIN_ADMIN_EMAIL} to ${student.email} with verified PDF attached.`
         });
+        setConfirmSend(false);
+        if (onSent) onSent();
+      } else if (res.queued) {
+        setSendResult({
+          success: false,
+          queued: true,
+          message: res.error || `Queued for Super Admin (${MAIN_ADMIN_EMAIL}) Gmail dispatch.`
+        });
+        setConfirmSend(false);
         if (onSent) onSent();
       } else {
         setSendResult({
@@ -90,7 +129,6 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 flex flex-col space-y-4">
-        
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-gray-100">
           <div className="flex items-center space-x-2">
@@ -102,7 +140,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
                 Send Certificate Email
               </h3>
               <p className="text-xs text-gray-500">
-                Official Google Student Ambassador Program 2026 delivery
+                Dispatched via Main Admin Gmail ({MAIN_ADMIN_EMAIL})
               </p>
             </div>
           </div>
@@ -132,30 +170,84 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-500">Certificate Status:</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-              student.certificateStatus === 'issued'
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-amber-100 text-amber-800'
-            }`}>
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                student.certificateStatus === 'issued'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-amber-100 text-amber-800'
+              }`}
+            >
               {student.certificateStatus === 'issued' ? `Issued (${student.certificateId})` : 'Not Issued Yet'}
             </span>
           </div>
         </div>
 
+        {/* Admin Gmail Authorization Status */}
+        {!isAdminGmailConnected ? (
+          <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2">
+            <p className="font-semibold">
+              Main Admin Gmail Authorization Needed ({MAIN_ADMIN_EMAIL})
+            </p>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              {isAdminUser
+                ? `Connect your Google account (${MAIN_ADMIN_EMAIL}) below so this browser can send the PDF certificate directly from your Gmail.`
+                : `Direct delivery uses the Main Admin's Gmail (${MAIN_ADMIN_EMAIL}). Sending without Admin authorization queues the email in the Admin Email Dispatch Queue.`}
+            </p>
+            {isAdminUser && (
+              <button
+                type="button"
+                onClick={handleConnectAdminGmail}
+                disabled={isConnectingGmail}
+                className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold transition flex items-center space-x-1.5"
+              >
+                <Chrome className="w-3.5 h-3.5 text-blue-600" />
+                <span>{isConnectingGmail ? 'Connecting...' : `Authorize Gmail (${MAIN_ADMIN_EMAIL})`}</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800 flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Main Admin Gmail connected: <span className="font-mono font-bold">{MAIN_ADMIN_EMAIL}</span> ready for live PDF delivery.
+            </span>
+          </div>
+        )}
+
+        {/* Confirmation Box before Send */}
+        {confirmSend && !isSending && (
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
+            <p className="font-bold">Confirm Email Delivery</p>
+            <p className="text-[11px] mt-0.5">
+              Send the official PDF certificate to <span className="font-mono font-semibold">{student.email}</span> from <span className="font-mono font-semibold">{MAIN_ADMIN_EMAIL}</span>? Click "Confirm & Send Now" below to proceed.
+            </p>
+          </div>
+        )}
+
         {/* Result Message */}
         {sendResult && (
-          <div className={`p-3.5 rounded-xl text-xs flex items-start space-x-2.5 ${
-            sendResult.success
-              ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-              : 'bg-red-50 border border-red-200 text-red-800'
-          }`}>
+          <div
+            className={`p-3.5 rounded-xl text-xs flex items-start space-x-2.5 ${
+              sendResult.success
+                ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                : sendResult.queued
+                ? 'bg-amber-50 border border-amber-200 text-amber-800'
+                : 'bg-red-50 border border-red-200 text-red-800'
+            }`}
+          >
             {sendResult.success ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             ) : (
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <AlertCircle className={`w-4 h-4 shrink-0 mt-0.5 ${sendResult.queued ? 'text-amber-600' : 'text-red-600'}`} />
             )}
             <div>
-              <p className="font-semibold">{sendResult.success ? 'Email Dispatched!' : 'Dispatch Error'}</p>
+              <p className="font-semibold">
+                {sendResult.success
+                  ? 'Email Sent via Gmail!'
+                  : sendResult.queued
+                  ? 'Queued for Super Admin Gmail'
+                  : 'Dispatch Error'}
+              </p>
               <p className="text-[11px] mt-0.5">{sendResult.message}</p>
             </div>
           </div>
@@ -167,7 +259,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
             PDF certificate is dynamically rendered with QR validation code and Ambassador signature.
           </p>
           <p>
-            Sent via Central Email Dispatch: <span className="font-mono text-gray-700 font-semibold">ambassador-certificates@google-student-ambassador.org</span>
+            Official Sender ID: <span className="font-mono text-gray-700 font-semibold">{MAIN_ADMIN_EMAIL}</span>
           </p>
         </div>
 
@@ -191,17 +283,22 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
             {isSending ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                Dispatching Email...
+                Sending via Gmail...
               </>
             ) : (
               <>
                 <Send className="w-3.5 h-3.5 mr-1.5" />
-                Send Official Email Now
+                {confirmSend
+                  ? isAdminGmailConnected
+                    ? 'Confirm & Send Now'
+                    : 'Queue for Admin Gmail'
+                  : isAdminGmailConnected
+                  ? 'Send via Admin Gmail'
+                  : 'Queue / Send Email'}
               </>
             )}
           </button>
         </div>
-
       </div>
     </div>
   );

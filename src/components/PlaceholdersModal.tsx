@@ -16,7 +16,7 @@ import {
   Move
 } from 'lucide-react';
 import { CertificateCustomElement, CertificateTemplateConfig } from '../types';
-import { getActiveCertificateTemplate, saveCertificateTemplate } from '../services/certificateTemplateService';
+import { getActiveCertificateTemplate, saveCertificateTemplate, populateCertificatePlaceholders } from '../services/certificateTemplateService';
 
 interface PlaceholdersModalProps {
   isOpen: boolean;
@@ -429,12 +429,19 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
                 backgroundImage: template.backgroundUrl ? `url(${template.backgroundUrl})` : undefined,
                 backgroundSize: '100% 100%',
                 backgroundPosition: 'center',
-                backgroundColor: '#FFFFFF',
+                backgroundColor: template.backgroundColor || '#FFFFFF',
                 boxShadow: '0 10px 40px -10px rgba(0,0,0,0.08)'
               }}
             >
               {elements.map(el => {
                 const isSelected = el.id === selectedId;
+                const resolvedFont = el.customFontName
+                  ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
+                  : el.fontFamily === 'serif'
+                  ? 'Playfair Display, Georgia, serif'
+                  : el.fontFamily === 'mono'
+                  ? 'monospace'
+                  : 'sans-serif';
                 let content: React.ReactNode = null;
 
                 if (el.type === 'placeholder') {
@@ -445,7 +452,7 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
                         fontSize: `${el.fontSize || 16}px`,
                         fontWeight: el.fontWeight || 'normal',
                         color: el.color || '#202124',
-                        fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                        fontFamily: resolvedFont
                       }}
                     >
                       {val}
@@ -458,11 +465,23 @@ export const PlaceholdersModal: React.FC<PlaceholdersModalProps> = ({
                         fontSize: `${el.fontSize || 16}px`,
                         fontWeight: el.fontWeight || 'normal',
                         color: el.color || '#202124',
-                        fontFamily: el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'sans-serif'
+                        fontFamily: resolvedFont
                       }}
                     >
-                      {el.customText || 'Text Box'}
+                      {populateCertificatePlaceholders(el.customText || 'Text Box', sampleValues)}
                     </span>
+                  );
+                } else if (el.type === 'image' && el.customText) {
+                  content = (
+                    <img
+                      src={el.customText}
+                      alt={el.label || 'Slide Graphic'}
+                      style={{
+                        width: el.width ? `${el.width * 5}px` : '64px',
+                        height: el.height ? `${el.height * 3.5}px` : 'auto',
+                        objectFit: 'contain'
+                      }}
+                    />
                   );
                 } else if (el.type === 'qr') {
                   content = (

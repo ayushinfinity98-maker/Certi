@@ -14,8 +14,18 @@ import {
 import { auth, db, testFirestoreConnection } from '../firebase/config';
 import { CampusAmbassador, AdminUser } from '../types';
 import { getAllCampusAmbassadors, getCampusAmbassadorByGoogleEmail } from '../services/dataService';
+import {
+  MAIN_ADMIN_EMAIL,
+  WORKSPACE_SCOPES,
+  authorizeGoogleWorkspacePopup,
+  clearWorkspaceAuthToken,
+  getWorkspaceAuthorizedEmail,
+  isAdminGmailAuthorized,
+  setWorkspaceAuthToken,
+  subscribeWorkspaceAuth
+} from '../services/googleWorkspaceAuth';
 
-export const BOOTSTRAP_ADMIN_EMAIL = 'ayushinfinity98@gmail.com';
+export const BOOTSTRAP_ADMIN_EMAIL = MAIN_ADMIN_EMAIL;
 const SESSION_STORAGE_KEY = 'gsap_active_auth_session_v2';
 
 interface AuthContextType {
@@ -25,6 +35,9 @@ interface AuthContextType {
   adminProfile: AdminUser | null;
   isLoading: boolean;
   isFirestoreConnected: boolean;
+  isAdminGmailConnected: boolean;
+  workspaceAuthorizedEmail: string | null;
+  connectAdminGmail: () => Promise<{ accessToken: string; email: string }>;
   loginWithGoogle: () => Promise<void>;
   loginWithCredentials: (identifier: string, password: string) => Promise<{ success: boolean; error?: string }>;
   loginDirectSuperAdmin: () => void;
@@ -41,6 +54,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [adminProfile, setAdminProfile] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(true);
+  const [isAdminGmailConnected, setIsAdminGmailConnected] = useState<boolean>(isAdminGmailAuthorized());
+  const [workspaceAuthorizedEmail, setWorkspaceAuthorizedEmail] = useState<string | null>(getWorkspaceAuthorizedEmail());
+
+  useEffect(() => {
+    const unsub = subscribeWorkspaceAuth(() => {
+      setIsAdminGmailConnected(isAdminGmailAuthorized());
+      setWorkspaceAuthorizedEmail(getWorkspaceAuthorizedEmail());
+    });
+    return unsub;
+  }, []);
 
   // Initialize and check Firestore connection
   useEffect(() => {
@@ -133,6 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error('Failed loading profile for user', e);
         }
       } else {
+        clearWorkspaceAuthToken();
         const savedSessionStr = localStorage.getItem(SESSION_STORAGE_KEY);
         if (!savedSessionStr) {
           setCurrentUser(null);
@@ -147,6 +171,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
+  const connectAdminGmail = async () => {
+    return await authorizeGoogleWorkspacePopup(BOOTSTRAP_ADMIN_EMAIL);
+  };
+
   /**
    * DIRECT GOOGLE SIGN IN
    * Allows Super Admin OR any CA registered by Admin with matching Google Email
@@ -155,9 +183,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      WORKSPACE_SCOPES.forEach(scope => provider.addScope(scope));
       provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
       const googleEmail = (result.user.email || '').toLowerCase().trim();
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setWorkspaceAuthToken(credential.accessToken, googleEmail);
+      }
 
       // Check Super Admin
       if (googleEmail === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
@@ -397,6 +430,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setIsLoading(true);
     try {
+      clearWorkspaceAuthToken();
       try {
         await signOut(auth);
       } catch (e) {
@@ -427,6 +461,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminProfile,
         isLoading,
         isFirestoreConnected,
+        isAdminGmailConnected,
+        workspaceAuthorizedEmail,
+        connectAdminGmail,
         loginWithGoogle,
         loginWithCredentials,
         loginDirectSuperAdmin,

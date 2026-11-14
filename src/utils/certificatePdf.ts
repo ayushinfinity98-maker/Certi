@@ -41,11 +41,11 @@ export async function renderCertificateToCanvas(
   // Load active template
   const tpl = await getActiveCertificateTemplate().catch(() => null);
 
-  // Background
-  ctx.fillStyle = '#FFFFFF';
+  // Background (solid color copied from Google Slide or white default)
+  ctx.fillStyle = tpl?.backgroundColor || '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
 
-  // 1. Draw custom background image if provided (or plain white if blank_plain)
+  // 1. Draw custom/Google Slide background image if provided
   if (tpl?.backgroundUrl) {
     try {
       const bgImg = new Image();
@@ -87,13 +87,31 @@ export async function renderCertificateToCanvas(
       if (el.type === 'placeholder' || el.type === 'text') {
         const textToDraw = el.type === 'placeholder'
           ? (values[el.placeholderTag || ''] || `{{${el.placeholderTag}}}`)
-          : (el.customText || '');
+          : populateCertificatePlaceholders(el.customText || '', values as any);
 
-        const fontFam = el.fontFamily === 'serif' ? 'Playfair Display, Georgia, serif' : 'Google Sans, Inter, sans-serif';
+        const fontFam = el.customFontName
+          ? `"${el.customFontName}", ${el.fontFamily === 'serif' ? 'Georgia, serif' : el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`
+          : el.fontFamily === 'serif'
+          ? 'Playfair Display, Georgia, serif'
+          : el.fontFamily === 'mono'
+          ? 'monospace'
+          : 'Google Sans, Inter, sans-serif';
         const fontW = el.fontWeight === 'bold' ? 'bold' : el.fontWeight === '600' ? '600' : 'normal';
         ctx.font = `${fontW} ${fontSize}px ${fontFam}`;
         ctx.fillStyle = el.color || '#202124';
         ctx.fillText(textToDraw, elX, elY);
+      } else if (el.type === 'image' && el.customText) {
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = el.customText;
+          await new Promise(r => { img.onload = r; img.onerror = r; });
+          const imgW = ((el.width || 12) / 100) * width;
+          const imgH = ((el.height || 12) / 100) * height;
+          ctx.drawImage(img, elX - imgW / 2, elY - imgH / 2, imgW, imgH);
+        } catch (e) {
+          console.warn('Slide image render error:', e);
+        }
       } else if (el.type === 'qr') {
         try {
           const qrImg = new Image();
@@ -131,7 +149,7 @@ export async function renderCertificateToCanvas(
         ctx.stroke();
 
         ctx.font = 'bold 26px "Google Sans", Inter, sans-serif';
-        ctx.fillStyle = '#202124';
+        ctx.fillStyle = el.color || '#202124';
         ctx.fillText(cert.caName, elX, elY + 36);
 
         ctx.font = '600 18px "Google Sans", Inter, sans-serif';

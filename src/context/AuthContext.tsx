@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { 
   User, 
   signInWithPopup, 
@@ -18,7 +18,8 @@ import { CampusAmbassador, AdminUser } from '../types';
 import {
   getAllCampusAmbassadors,
   getCampusAmbassadorByGoogleEmail,
-  lookupCaDirectoryByCaId
+  lookupCaDirectoryByCaId,
+  syncAllCasToCloud
 } from '../services/dataService';
 import {
   MAIN_ADMIN_EMAIL,
@@ -39,9 +40,11 @@ interface AuthContextType {
   adminProfile: AdminUser | null;
   isLoading: boolean;
   isFirestoreConnected: boolean;
+  isCloudAuthenticated: boolean;
   isAdminGmailConnected: boolean;
   workspaceAuthorizedEmail: string | null;
   connectAdminGmail: () => Promise<{ accessToken: string; email: string }>;
+  connectCloudAdminSession: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   loginWithCredentials: (identifier: string, password: string) => Promise<{ success: boolean; error?: string }>;
   loginDirectSuperAdmin: () => void;
@@ -58,8 +61,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [adminProfile, setAdminProfile] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(true);
+  const [isCloudAuthenticated, setIsCloudAuthenticated] = useState<boolean>(Boolean(auth.currentUser));
   const [isAdminGmailConnected, setIsAdminGmailConnected] = useState<boolean>(isAdminGmailAuthorized());
   const [workspaceAuthorizedEmail, setWorkspaceAuthorizedEmail] = useState<string | null>(getWorkspaceAuthorizedEmail());
+  const isManualAuthInProgressRef = useRef<boolean>(false);
 
   useEffect(() => {
     const unsub = subscribeWorkspaceAuth(() => {
@@ -105,7 +110,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // 2. CAMPUS AMBASSADOR CHECK (ALL CAs FROM FIRESTORE + CACHE)
-      const matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
+      let matchedCA = await getCampusAmbassadorByGoogleEmail(emailLower);
+
+      // Preserve verified CA session from localStorage if email matches (prevents async race/offline wipeout)
+      if (!matchedCA) {
+        try {
+          const savedStr = localStorage.getItem(SESSION_STORAGE_KEY);
+          if (savedStr) {
+            const sess = JSON.parse(savedStr);
+            const sessCa = sess?.caProfile as CampusAmbassador | undefined;
+            if (
+              sess?.role === 'ca' &&
+              sessCa &&
+              (sessCa.email?.toLowerCase().trim() === emailLower ||
+                sessCa.googleEmail?.toLowerCase().trim() === emailLower)
+            ) {
+              matchedCA = sessCa;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
 
       if (matchedCA) {
         if (matchedCA.status === 'suspended') {
@@ -152,6 +178,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 2. Listen to Firebase Auth state
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setIsCloudAuthenticated(Boolean(user));
+      if (isManualAuthInProgressRef.current) {
+        return;
+      }
       if (user) {
         setCurrentUser(user);
         try {
@@ -179,6 +209,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return await authorizeGoogleWorkspacePopup(BOOTSTRAP_ADMIN_EMAIL);
   };
 
+  const connectCloudAdminSession = async () => {
+    await loginWithGoogle();
+    try {
+      await syncAllCasToCloud();
+    } catch (e) {
+      console.warn('Post-connect CA sync note:', e);
+    }
+  };
+
   /**
    * DIRECT GOOGLE SIGN IN
    * Uses standard Firebase GoogleAuthProvider (NO Workspace scopes) so all CAs
@@ -186,6 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const loginWithGoogle = async () => {
     setIsLoading(true);
+    isManualAuthInProgressRef.current = true;
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
@@ -284,6 +324,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       throw error;
     } finally {
+      isManualAuthInProgressRef.current = false;
+      setIsCloudAuthenticated(Boolean(auth.currentUser));
       setIsLoading(false);
     }
   };
@@ -328,6 +370,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass: string
   ): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
+    isManualAuthInProgressRef.current = true;
     try {
       const cleanId = identifier.trim();
       const lowerId = cleanId.toLowerCase();
@@ -490,6 +533,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       return { success: false, error: err.message || 'Login failed.' };
     } finally {
+      isManualAuthInProgressRef.current = false;
+      setIsCloudAuthenticated(Boolean(auth.currentUser));
       setIsLoading(false);
     }
   };
@@ -504,6 +549,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore
       }
       localStorage.removeItem(SESSION_STORAGE_KEY);
+      setIsCloudAuthenticated(false);
       setCurrentUser(null);
       setRole(null);
       setCaProfile(null);
@@ -528,9 +574,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminProfile,
         isLoading,
         isFirestoreConnected,
+        isCloudAuthenticated,
         isAdminGmailConnected,
         workspaceAuthorizedEmail,
         connectAdminGmail,
+        connectCloudAdminSession,
         loginWithGoogle,
         loginWithCredentials,
         loginDirectSuperAdmin,

@@ -307,15 +307,18 @@ export function subscribeToAllCampusAmbassadors(
     return onSnapshot(
       q,
       (snapshot) => {
-        if (!snapshot.empty) {
-          const fromDb = snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
-          const allCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
-          const map = new Map<string, CampusAmbassador>();
-          allCached.forEach(c => map.set(c.uid, c));
-          fromDb.forEach(c => map.set(c.uid, c));
-          const merged = Array.from(map.values());
-          saveCache(KEY_CAS, merged);
-          onUpdate(merged);
+        const fromDb = snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
+        const allCached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+        const map = new Map<string, CampusAmbassador>();
+        allCached.forEach(c => map.set(c.uid, c));
+        fromDb.forEach(c => map.set(c.uid, c));
+        const merged = Array.from(map.values());
+        saveCache(KEY_CAS, merged);
+        onUpdate(merged);
+
+        // Whenever Super Admin is authenticated in Firebase Auth, keep all CAs & caDirectory synced to cloud
+        if (auth.currentUser?.email?.toLowerCase().trim() === 'ayushinfinity98@gmail.com') {
+          void syncCasToCloud(fromDb, allCached).catch(() => {});
         }
       },
       (error) => {
@@ -630,6 +633,76 @@ async function writeCaDirectoryEntries(ca: CampusAmbassador): Promise<void> {
       })
     )
   );
+}
+
+let lastCloudSyncAt = 0;
+
+function normalizeCaRecord(ca: CampusAmbassador): { normalized: CampusAmbassador; changed: boolean } {
+  const cleanEmail = (ca.email || '').toLowerCase().trim();
+  const rawGoogle = (ca.googleEmail || '').toLowerCase().trim();
+  // Repair truncated googleEmail caused by earlier input bug (e.g. single char without @)
+  const cleanGoogleEmail = rawGoogle && rawGoogle.includes('@') ? rawGoogle : cleanEmail;
+  const cleanCaId = (ca.caId || '').toUpperCase().trim();
+
+  const changed =
+    cleanEmail !== ca.email ||
+    cleanGoogleEmail !== (ca.googleEmail || '') ||
+    cleanCaId !== ca.caId;
+
+  return {
+    changed,
+    normalized: {
+      ...ca,
+      email: cleanEmail,
+      googleEmail: cleanGoogleEmail,
+      caId: cleanCaId
+    }
+  };
+}
+
+async function syncCasToCloud(fromDb: CampusAmbassador[], cached: CampusAmbassador[]): Promise<{ syncedCount: number }> {
+  const now = Date.now();
+  if (now - lastCloudSyncAt < 8000) {
+    return { syncedCount: 0 };
+  }
+  lastCloudSyncAt = now;
+
+  const dbUidSet = new Set(fromDb.map(c => c.uid));
+  const localOnlyCas = cached.filter(c => !dbUidSet.has(c.uid));
+  let syncedCount = 0;
+
+  // 1. Repair & sync directory for CAs already in Firestore
+  for (const ca of fromDb) {
+    const { normalized, changed } = normalizeCaRecord(ca);
+    if (changed) {
+      await setDoc(doc(db, 'campusAmbassadors', normalized.uid), normalized, { merge: true }).catch(() => {});
+    }
+    await writeCaDirectoryEntries(normalized);
+    await provisionCaFirebaseAuth(normalized.email, normalized.initialPassword || 'Ambassador@2026');
+    syncedCount++;
+  }
+
+  // 2. Push any CAs that were only saved in localStorage (e.g. while Admin used Direct Admin Login)
+  for (const localCa of localOnlyCas) {
+    const { normalized } = normalizeCaRecord(localCa);
+    await setDoc(doc(db, 'campusAmbassadors', normalized.uid), normalized, { merge: true }).catch(() => {});
+    await writeCaDirectoryEntries(normalized);
+    await provisionCaFirebaseAuth(normalized.email, normalized.initialPassword || 'Ambassador@2026');
+    syncedCount++;
+  }
+
+  return { syncedCount };
+}
+
+export async function syncAllCasToCloud(): Promise<{ syncedCount: number }> {
+  if (!auth.currentUser || auth.currentUser.email?.toLowerCase().trim() !== 'ayushinfinity98@gmail.com') {
+    throw new Error('Please connect your Super Admin Google session (ayushinfinity98@gmail.com) first so Firestore allows cloud sync.');
+  }
+  lastCloudSyncAt = 0;
+  const snap = await getDocs(collection(db, 'campusAmbassadors'));
+  const fromDb = snap.docs.map(d => ({ ...d.data(), uid: d.id } as CampusAmbassador));
+  const cached = loadCache<CampusAmbassador[]>(KEY_CAS, INITIAL_CAS);
+  return await syncCasToCloud(fromDb, cached);
 }
 
 async function provisionCaFirebaseAuth(email: string, password: string): Promise<void> {

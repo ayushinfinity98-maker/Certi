@@ -36,7 +36,8 @@ import {
   getStudentsForCA,
   logCAStatusChange,
   subscribeToAllCampusAmbassadors,
-  subscribeToCertificates
+  subscribeToCertificates,
+  syncAllCasToCloud
 } from '../services/dataService';
 import { CaModal } from './CaModal';
 import { SignatureModal } from './SignatureModal';
@@ -57,7 +58,9 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminEmail }) => {
-  const { isAdminGmailConnected, connectAdminGmail } = useAuth();
+  const { isAdminGmailConnected, connectAdminGmail, isCloudAuthenticated, connectCloudAdminSession } = useAuth();
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'cas' | 'designer' | 'templates' | 'certificates' | 'audit'>('cas');
   const [cas, setCas] = useState<CampusAmbassador[]>([]);
   const [metrics, setMetrics] = useState({
@@ -134,6 +137,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
       await updateCampusAmbassador(editingCa.uid, data, adminUid, adminEmail);
     } else {
       await createCampusAmbassadorAccount(data, adminUid, adminEmail);
+    }
+    if (!isCloudAuthenticated) {
+      setCloudSyncNotice(
+        `Saved ${data.name} locally, but Cloud Sync is inactive. Click "Connect Cloud Admin & Sync CAs" above so this Ambassador can log in from other devices.`
+      );
+    } else {
+      setCloudSyncNotice(`Synced ${data.name} (${data.caId}) to Firebase Cloud & Auth.`);
     }
     await loadData();
   };
@@ -295,8 +305,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
     return matchesSearch && matchesStatus;
   });
 
+  const handleSyncCasToCloud = async () => {
+    setIsSyncingCloud(true);
+    setCloudSyncNotice(null);
+    try {
+      if (!isCloudAuthenticated) {
+        await connectCloudAdminSession();
+      }
+      const res = await syncAllCasToCloud();
+      setCloudSyncNotice(`Synced ${res.syncedCount} Campus Ambassador account(s) & login indexes to Firebase Cloud.`);
+    } catch (err: any) {
+      setCloudSyncNotice(err.message || 'Could not sync CAs to Firebase Cloud.');
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Firebase Cloud Auth Sync Warning (when Admin used Direct Login instead of Google) */}
+      {!isCloudAuthenticated && (
+        <div className="p-3.5 rounded-2xl border bg-red-50 border-red-200 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center space-x-2.5 text-xs">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
+            <div>
+              <span className="font-bold text-red-900">Cloud Database Write Session Not Active:</span>{' '}
+              <span className="text-red-800">
+                New CA accounts cannot sync across browsers/devices until you authenticate once with Google ({MAIN_ADMIN_EMAIL}).
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncCasToCloud}
+            disabled={isSyncingCloud}
+            className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+          >
+            <Chrome className="w-3.5 h-3.5" />
+            <span>{isSyncingCloud ? 'Connecting & Syncing...' : 'Connect Cloud Admin & Sync CAs'}</span>
+          </button>
+        </div>
+      )}
+
+      {cloudSyncNotice && (
+        <div className="p-3 rounded-xl border bg-blue-50 border-blue-200 text-xs text-blue-900 flex items-center justify-between">
+          <span>{cloudSyncNotice}</span>
+          <button type="button" onClick={() => setCloudSyncNotice(null)} className="font-bold text-blue-700 ml-3">
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Main Admin Gmail Connection Bar */}
       <div className={`p-3.5 rounded-2xl border flex items-center justify-between flex-wrap gap-3 ${
         isAdminGmailConnected
@@ -317,6 +376,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUid, adminE
           </div>
         </div>
         <div className="flex items-center space-x-2">
+          {isCloudAuthenticated && (
+            <button
+              type="button"
+              onClick={handleSyncCasToCloud}
+              disabled={isSyncingCloud}
+              className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-xl text-[11px] font-bold hover:bg-gray-50 transition flex items-center space-x-1 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+              <span>{isSyncingCloud ? 'Syncing...' : 'Sync CA Logins'}</span>
+            </button>
+          )}
           {pendingOrFailedLogs.length > 0 && (
             <button
               type="button"

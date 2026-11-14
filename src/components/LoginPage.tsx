@@ -193,8 +193,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToVerify }) => {
               </svg>
               <span>Continue with Google</span>
             </button>
-            <p className="text-[10px] text-gray-400 text-center">
-              Super Admin & authorized Campus Ambassadors can sign in directly with their Google account.
+            <p className="text-[10px] text-gray-500 text-center leading-relaxed">
+              Campus Ambassadors can sign in anytime using their <span className="font-semibold text-gray-700">Email / CA ID &amp; Password</span> above. If Google Sign-In shows an access-blocked message, the Super Admin must set OAuth Consent Screen to <span className="font-semibold text-gray-700">In Production</span> in Google Cloud Console.
             </p>
           </div>
 
